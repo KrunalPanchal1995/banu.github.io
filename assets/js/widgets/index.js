@@ -4,4 +4,6 @@ import attention from "./attention.js";
 import posenc from "./posenc.js";
 import bpe from "./bpe.js";
 import sampler from "./sampler.js";
-export const WIDGETS = [bayes, ngram, attention, posenc, bpe, sampler];
+import context from "./context.js";
+import vote from "./vote.js";
+export const WIDGETS = [bayes, ngram, attention, posenc, bpe, sampler, context, vote];
