@@ -10,4 +10,6 @@ import askcourse from "./askcourse.js";
 import ann from "./ann.js";
 import lora from "./lora.js";
 import quant from "./quant.js";
-export const WIDGETS = [bayes, ngram, attention, posenc, bpe, sampler, context, vote, askcourse, ann, lora, quant];
+import diffusion from "./diffusion.js";
+import tokens from "./tokens.js";
+export const WIDGETS = [bayes, ngram, attention, posenc, bpe, sampler, context, vote, askcourse, ann, lora, quant, diffusion, tokens];
