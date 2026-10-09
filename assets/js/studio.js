@@ -66,7 +66,7 @@ function buildPanel() {
       input.addEventListener("input", () => { vals[prm.key] = input.value; writeHash(); draw(); });
     }
     prm._input = input;
-    const v = el("span", { class: "val" }, prm.type === "text" ? "" : fmtVal(prm, vals[prm.key]));
+    const v = prm.type === "text" ? null : el("span", { class: "val" }, fmtVal(prm, vals[prm.key]));
     valEls[prm.key] = v;
     host.append(el("div", { class: "ctl" },
       el("label", { for: id }, el("span", {}, prm.label), v), input,

@@ -80,6 +80,6 @@ export default {
       toks.forEach((t, i) => { const col = S.c[i % 5]; if (x + ctx.measureText(t).width + 20 > S.w - 8) { x = x0; row += 32; } x += chip(ctx, S, t, x, row, col, col + "26") + 4; });
       y = row + 42;
     }
-    ctx.fillStyle = S.ink; ctx.fillText(`${total} tokens for ${chars} characters → ${(total / Math.max(chars, 1)).toFixed(2)} tokens per character`, x0, Math.min(S.h - 14, y + 4));
+    ctx.fillStyle = S.ink; ctx.fillText(`${total} tokens for ${chars} characters`, x0, Math.min(S.h - 30, y + 4)); ctx.fillText(`= ${(total / Math.max(chars, 1)).toFixed(2)} tokens per character`, x0, Math.min(S.h - 12, y + 22));
   },
 };
