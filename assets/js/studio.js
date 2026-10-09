@@ -104,8 +104,9 @@ export function init() {
   const list = $("#wlist"); let lastUnit = "";
   for (const w of WIDGETS) {
     if (w.group !== lastUnit) { list.append(el("h4", {}, w.group)); lastUnit = w.group; }
-    list.append(el("button", { type: "button", "data-id": w.id, onclick: () => select(w.id) }, w.title));
+    list.append(el("button", { type: "button", "data-id": w.id, onclick: () => { select(w.id); if (matchMedia("(max-width: 999px)").matches) { $("#wbox").open = false; $("#w-title").scrollIntoView({ block: "start" }); } } }, w.title));
   }
+  if (matchMedia("(max-width: 999px)").matches) $("#wbox").open = false;
   const h = parseHash(); select(h.id, h.q);
   window.addEventListener("hashchange", () => { const x = parseHash(); if (x.id !== cur.id) select(x.id, x.q); });
   new ResizeObserver(draw).observe(canvas);

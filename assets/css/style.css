@@ -119,3 +119,14 @@ footer { border-top: 1px solid var(--line); padding: 22px 0 40px; color: var(--m
 .ctl .help { color: var(--muted); font-size: 13px; margin-top: 2px; }
 .ctl .ends { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
 .tools { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
+
+@media (max-width: 640px) {
+  .site-head .wrap { height: auto; min-height: 52px; flex-wrap: wrap; gap: 2px 8px; padding-top: 6px; padding-bottom: 6px; }
+  .nav { margin-left: 0; width: 100%; gap: 2px; }
+  .nav a { padding: 5px 8px; font-size: 14px; }
+  .brand .long { display: none; }
+  .hero { padding-top: 24px; }
+}
+
+.pg-list summary { display: none; }
+@media (max-width: 999px) { .pg-list summary { display: block; cursor: pointer; font-weight: 600; padding: 6px 8px; } .pg-list[open] summary { margin-bottom: 6px; border-bottom: 1px solid var(--line); } }

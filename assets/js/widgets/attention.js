@@ -36,7 +36,7 @@ export default {
     for (let i = 0; i < n; i++) {
       ctx.textAlign = "right"; ctx.fillStyle = i === f ? S.ink : S.muted; ctx.font = (i === f ? "600 " : "") + "12px system-ui"; ctx.fillText(`${i + 1} ${words[i]}`.slice(0, 11), x0 - 6, y0 + i * cell + cell / 2 + 4);
       for (let j = 0; j < n; j++) { const v = W[i][j]; ctx.fillStyle = S.accent; ctx.globalAlpha = 0.08 + 0.92 * v; ctx.fillRect(x0 + j * cell, y0 + i * cell, cell - 1, cell - 1); ctx.globalAlpha = 1;
-        if (cell > 30 && v > 0.04) { ctx.fillStyle = v > 0.5 ? "#fff" : S.ink; ctx.textAlign = "center"; ctx.font = "10px system-ui"; ctx.fillText(v.toFixed(2), x0 + j * cell + cell / 2, y0 + i * cell + cell / 2 + 3); } }
+        if (cell > 30 && v > 0.04) { ctx.fillStyle = v > 0.5 ? S.bg : S.ink; ctx.textAlign = "center"; ctx.font = "10px system-ui"; ctx.fillText(v.toFixed(2), x0 + j * cell + cell / 2, y0 + i * cell + cell / 2 + 3); } }
     }
     ctx.strokeStyle = S.c[3]; ctx.lineWidth = 2.5; ctx.strokeRect(x0 - 1, y0 + f * cell - 1, n * cell + 1, cell + 1); ctx.lineWidth = 1;
     ctx.font = "12px system-ui"; ctx.fillStyle = S.muted; ctx.textAlign = "right";
