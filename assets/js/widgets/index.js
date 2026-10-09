@@ -16,4 +16,6 @@ import agent from "./agent.js";
 import reliability from "./reliability.js";
 import metrics from "./metrics.js";
 import fairness from "./fairness.js";
-export const WIDGETS = [bayes, ngram, attention, posenc, bpe, sampler, context, vote, askcourse, ann, lora, quant, diffusion, tokens, agent, reliability, metrics, fairness];
+import serving from "./serving.js";
+import batching from "./batching.js";
+export const WIDGETS = [bayes, ngram, attention, posenc, bpe, sampler, context, vote, askcourse, ann, lora, quant, diffusion, tokens, agent, reliability, metrics, fairness, serving, batching];
