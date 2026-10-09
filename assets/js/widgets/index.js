@@ -14,4 +14,6 @@ import diffusion from "./diffusion.js";
 import tokens from "./tokens.js";
 import agent from "./agent.js";
 import reliability from "./reliability.js";
-export const WIDGETS = [bayes, ngram, attention, posenc, bpe, sampler, context, vote, askcourse, ann, lora, quant, diffusion, tokens, agent, reliability];
+import metrics from "./metrics.js";
+import fairness from "./fairness.js";
+export const WIDGETS = [bayes, ngram, attention, posenc, bpe, sampler, context, vote, askcourse, ann, lora, quant, diffusion, tokens, agent, reliability, metrics, fairness];
