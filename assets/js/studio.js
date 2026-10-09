@@ -15,7 +15,7 @@ const css = (name) => getComputedStyle(document.documentElement).getPropertyValu
 export function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
 let cur = null, vals = {}, canvas, ctx, valEls = {};
-const fmtVal = (prm, v) => prm.type === "select" ? (prm.options.find((o) => o[0] === v) || [, v])[1].split(":")[0] : (prm.fmt ? prm.fmt(v) : typeof v === "number" ? String(+v.toFixed(3)) : String(v)) + (prm.unit ? " " + prm.unit : "");
+const fmtVal = (prm, v) => prm.type === "select" ? (prm.options.find((o) => o[0] === v) || [, v])[1].split(/:| \(/)[0] : (prm.fmt ? prm.fmt(v) : typeof v === "number" ? String(+v.toFixed(3)) : String(v)) + (prm.unit ? " " + prm.unit : "");
 
 function parseHash() {
   const [id, q = ""] = location.hash.replace(/^#/, "").split("?");
@@ -66,7 +66,7 @@ function buildPanel() {
       input.addEventListener("input", () => { vals[prm.key] = input.value; writeHash(); draw(); });
     }
     prm._input = input;
-    const v = prm.type === "text" ? null : el("span", { class: "val" }, fmtVal(prm, vals[prm.key]));
+    const v = prm.type === "text" ? null : el("span", { class: prm.type === "select" ? "val sel" : "val" }, fmtVal(prm, vals[prm.key]));
     valEls[prm.key] = v;
     host.append(el("div", { class: "ctl" },
       el("label", { for: id }, el("span", {}, prm.label), v), input,
@@ -92,6 +92,8 @@ function draw() {
   ctx.clearRect(0, 0, w, h);
   const S = { w, h, ink: css("--ink"), muted: css("--muted"), line: css("--line"), accent: css("--accent"), bg: css("--bg"), surface: css("--surface"),
     c: [css("--c1"), css("--c2"), css("--c3"), css("--c4"), css("--c5")], grey: css("--grey"), good: css("--good"), bad: css("--bad"), rng: mulberry32 };
+  S.wrap = (text, x, y, maxW, lh = 17) => { const words = String(text).split(" "); let line = ""; for (const w of words) { const t = line ? line + " " + w : w; if (ctx.measureText(t).width > maxW && line) { ctx.fillText(line, x, y); y += lh; line = w; } else line = t; } ctx.fillText(line, x, y); return y + lh; };
+  S.mix = (hex, t) => { const h = (c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16)), a = h(hex), b = h(S.bg.length === 7 ? S.bg : "#ffffff"); return `rgb(${a.map((v, i) => Math.round(b[i] + (v - b[i]) * t)).join(",")})`; };
   ctx.font = "13px system-ui, sans-serif"; ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
   cur.draw(ctx, { ...vals }, S);
   canvas.dataset.drawn = String(+(canvas.dataset.drawn || 0) + 1);

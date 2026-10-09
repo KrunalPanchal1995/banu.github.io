@@ -112,7 +112,8 @@ footer { border-top: 1px solid var(--line); padding: 22px 0 40px; color: var(--m
 .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 .ctl { margin: 0 0 14px; }
 .ctl label { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; font-size: 14.5px; gap: 8px; }
-.ctl .val { font: 600 13px ui-monospace, monospace; color: var(--accent); background: var(--accent-soft); padding: 1px 7px; border-radius: 6px; white-space: nowrap; }
+.ctl .val.sel { max-width: 55%; overflow: hidden; text-overflow: ellipsis; }
+.ctl .val { flex: none; font: 600 13px ui-monospace, monospace; color: var(--accent); background: var(--accent-soft); padding: 1px 7px; border-radius: 6px; white-space: nowrap; }
 .ctl input[type=range] { width: 100%; accent-color: var(--accent); margin: 6px 0 0; }
 .ctl select, .ctl input[type=text] { width: 100%; padding: 7px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; margin-top: 4px; }
 .ctl .help { color: var(--muted); font-size: 13px; margin-top: 2px; }
