@@ -32,7 +32,7 @@ img, canvas, svg { max-width: 100%; }
 .site-head { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
 .site-head .wrap { display: flex; align-items: center; gap: 14px; height: 56px; }
 .brand { font-weight: 700; text-decoration: none; color: var(--ink); white-space: nowrap; }
-.brand span { color: var(--accent); }
+.brand span:not(.long) { color: var(--accent); }
 .nav { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
 .nav a { text-decoration: none; color: var(--muted); padding: 6px 10px; border-radius: 8px; font-size: 15px; }
 .nav a:hover, .nav a[aria-current="page"] { color: var(--ink); background: var(--accent-soft); }
