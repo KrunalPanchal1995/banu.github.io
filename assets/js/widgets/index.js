@@ -6,4 +6,6 @@ import bpe from "./bpe.js";
 import sampler from "./sampler.js";
 import context from "./context.js";
 import vote from "./vote.js";
-export const WIDGETS = [bayes, ngram, attention, posenc, bpe, sampler, context, vote];
+import askcourse from "./askcourse.js";
+import ann from "./ann.js";
+export const WIDGETS = [bayes, ngram, attention, posenc, bpe, sampler, context, vote, askcourse, ann];
