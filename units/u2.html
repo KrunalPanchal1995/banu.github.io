@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neural Networks and the Transformer · GenAI crash course</title>
+<meta name="description" content="From next-token prediction to RAG, fine-tuning, agents and deployment. Ten units, each with a PDF, runnable code and an interactive widget. Built for a B.Tech 4th-year student.">
+<link rel="stylesheet" href="../assets/css/style.css">
+<script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="stylesheet" href="../assets/vendor/katex/katex.min.css"></head><body>
+<header class="site-head"><div class="wrap">
+<a class="brand" href="../index.html">GenAI <span>&amp;</span> LLMs crash course</a>
+<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../playground/index.html">Playground</a><a href="../downloads.html">Downloads</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
+</div></header>
+<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 2</strong><a href="#topics">Syllabus topics</a></aside><article><p><span class="chip">Unit 2</span> <span class="chip soon">in preparation</span></p><h1>Neural Networks and the Transformer</h1><p class="lede">Why RNNs struggled, how attention fixes it, and every part of the Transformer block.</p><p class="box warn">Notes, code and widgets for this unit are being written. The topics below are the syllabus.</p><h2 id="topics">Syllabus topics</h2><ul><li>Sequence modelling, RNNs and LSTMs and their limits</li><li>Attention, self-attention and cross-attention</li><li>Positional encoding</li><li>Encoder, decoder and encoder-decoder models: BERT, GPT, T5</li><li>Parameters, layers, context window and computational complexity</li></ul><p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u1.html">← Foundations</a><a class="btn" href="u3.html">LLMs →</a></p></article></div></main>
+<footer><div class="wrap">Generative AI and LLMs crash course · Code is MIT-licensed; PDFs are for study use.</div></footer>
+<script>
+document.getElementById('theme').onclick=function(){var d=document.documentElement,c=d.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'),n=c==='dark'?'light':'dark';d.dataset.theme=n;try{localStorage.setItem('theme',n)}catch(e){};document.dispatchEvent(new Event('themechange'))};
+</script>
+<script src="../assets/vendor/katex/katex.min.js"></script><script>document.querySelectorAll(".math").forEach(function(n){katex.render(n.dataset.tex,n,{displayMode:true,throwOnError:false})});</script></body></html>

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM Studio playground · GenAI crash course</title>
+<meta name="description" content="From next-token prediction to RAG, fine-tuning, agents and deployment. Ten units, each with a PDF, runnable code and an interactive widget. Built for a B.Tech 4th-year student.">
+<link rel="stylesheet" href="../assets/css/style.css">
+<script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head><body>
+<header class="site-head"><div class="wrap">
+<a class="brand" href="../index.html">GenAI <span>&amp;</span> LLMs crash course</a>
+<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../playground/index.html" aria-current=page>Playground</a><a href="../downloads.html">Downloads</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
+</div></header>
+<main class="wrap"><div class="pg">
+<nav class="pg-list" id="wlist" aria-label="Widgets"></nav>
+<section class="pg-main"><h2 id="w-title"></h2><p class="blurb" id="w-blurb"></p>
+<div class="stage"><canvas id="stage" role="img" aria-label="Interactive visualisation"></canvas></div>
+<div class="explain"><div class="box"><b>What you're seeing</b><span id="w-what"></span></div><div class="box good"><b>Try this</b><span id="w-try"></span></div></div>
+<p><a id="w-unit" href="#"></a></p></section>
+<aside class="pg-ctl"><h3>Options</h3><div id="controls"></div></aside></div></main>
+<footer><div class="wrap">Generative AI and LLMs crash course · Code is MIT-licensed; PDFs are for study use.</div></footer>
+<script>
+document.getElementById('theme').onclick=function(){var d=document.documentElement,c=d.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'),n=c==='dark'?'light':'dark';d.dataset.theme=n;try{localStorage.setItem('theme',n)}catch(e){};document.dispatchEvent(new Event('themechange'))};
+</script>
+<script type="module">import { init } from "../assets/js/studio.js"; init();</script></body></html>
