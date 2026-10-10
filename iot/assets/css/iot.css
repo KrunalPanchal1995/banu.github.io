@@ -1,0 +1,10 @@
+/* IoT course additions to the shared style (loaded after ../assets/css/style.css). */
+.doc .definition,.doc .keyidea,.doc .warning,.doc .exercise,.doc .create,.doc .term{border:1px solid var(--line);border-left:4px solid var(--accent);background:var(--surface);border-radius:8px;padding:10px 16px;margin:14px 0}
+.doc .definition::before,.doc .keyidea::before,.doc .warning::before,.doc .exercise::before,.doc .create::before,.doc .term::before{content:attr(title);display:block;font-weight:700;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.doc .keyidea{border-left-color:var(--good)}.doc .warning{border-left-color:var(--warn)}.doc .exercise{border-left-color:var(--c2)}.doc .create{border-left-color:var(--c5)}
+.doc .definition>:last-child,.doc .keyidea>:last-child,.doc .exercise>:last-child,.doc .create>:last-child{margin-bottom:0}
+.doc .katex-display{overflow-x:auto;overflow-y:hidden;padding:2px 0}
+.doc figure img{max-width:100%;height:auto}
+.doc table{font-size:14px}
+.doc h2{scroll-margin-top:70px}
+.doc caption{caption-side:bottom;color:var(--muted);font-size:13.5px;padding-top:6px;text-align:left}

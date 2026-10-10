@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unit 9: Control Systems for Robots · IoT and Robotics</title>
+<meta name="description" content="From volts and sensors to MQTT, security, kinematics, control, localisation and navigation, built around one running project: a Smart Greenhouse Rover. Twelve units with a PDF and runnable code each, a 14-lab track and an assessment bank. Built for a B.Tech student; simulation-first, no hardware needed.">
+<link rel="stylesheet" href="../../assets/css/style.css"><link rel="stylesheet" href="../assets/css/iot.css">
+<script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="stylesheet" href="../../assets/vendor/katex/katex.min.css"></head><body>
+<header class="site-head"><div class="wrap">
+<a class="brand" href="../index.html">IoT <span>&amp;</span> Robotics<span class="long"> crash course</span></a>
+<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
+</div></header>
+<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 9</strong><a href="#topics">Syllabus topics</a></aside><article class="doc"><p><span class="chip">Unit 9</span> <span class="chip soon">in preparation</span></p><h1>Control Systems for Robots</h1><p class="lede">The motor model, P, PI and PID control, step-response metrics, tuning and windup.</p><p class="box warn">Notes and code for this unit are being written. The topics below are the syllabus.</p><h2 id="topics">Syllabus topics</h2><ul><li>Open and closed loop; on/off control</li><li>P, PI, PID; step-response metrics</li><li>Tuning and integral windup</li><li>Discrete-time implementation; heading and line following</li></ul><p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u8.html">&larr; Kinematics</a><a class="btn" href="u10.html">Perception &rarr;</a></p></article></div></main>
+<footer><div class="wrap">Internet of Things and Robotics crash course · Code is MIT-licensed; PDFs are for study use. Companion to the <a href="../../index.html">Generative AI and LLMs course</a>.</div></footer>
+<script>
+document.getElementById('theme').onclick=function(){var d=document.documentElement,c=d.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'),n=c==='dark'?'light':'dark';d.dataset.theme=n;try{localStorage.setItem('theme',n)}catch(e){}};
+</script>
+<script src="../../assets/vendor/katex/katex.min.js"></script><script>document.querySelectorAll(".math").forEach(function(n){var d=n.classList.contains("display");var t=n.textContent.replace(/^\\[\(\[]|\\[\)\]]$/g,"");try{katex.render(t,n,{displayMode:d,throwOnError:false})}catch(e){}});</script></body></html>

@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unit 1: Foundations of IoT and Robotics: Sense, Think, Act, Report · IoT and Robotics</title>
+<meta name="description" content="From volts and sensors to MQTT, security, kinematics, control, localisation and navigation, built around one running project: a Smart Greenhouse Rover. Twelve units with a PDF and runnable code each, a 14-lab track and an assessment bank. Built for a B.Tech student; simulation-first, no hardware needed.">
+<link rel="stylesheet" href="../../assets/css/style.css"><link rel="stylesheet" href="../assets/css/iot.css">
+<script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="stylesheet" href="../../assets/vendor/katex/katex.min.css"></head><body>
+<header class="site-head"><div class="wrap">
+<a class="brand" href="../index.html">IoT <span>&amp;</span> Robotics<span class="long"> crash course</span></a>
+<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
+</div></header>
+<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 1</strong><a href="#session-map">Session map</a><a href="#terms-the-term-tree">1. Terms: the term tree</a><a href="#remember">2. Remember</a><a href="#understand-the-derivation">3. Understand: the derivation</a><a href="#apply">4. Apply</a><a href="#analyze">5. Analyze</a><a href="#evaluate">6. Evaluate</a><a href="#create">7. Create</a><a href="#visualization-lesson">8. Visualization lesson</a><a href="#problem-set">9. Problem set</a><a href="#retrieval-practice-and-recap">10. Retrieval practice and recap</a><a href="#where-next">11. Where next</a></aside><article class="doc"><p><span class="chip">Unit 1</span> <span class="chip ">ready</span></p><h1>Foundations of IoT and Robotics: Sense, Think, Act, Report</h1><p class="lede">The four-layer architecture, the sense-think-act loop, and the thermostat that teaches delay, noise and sampling.</p><div class="dl"><a class="btn primary" href="../downloads/u1/u1-notes.pdf" download>PDF notes<small>789 KB</small></a><a class="btn" href="../downloads/u1/u1-notes.docx" download>Word (.docx)<small>511 KB</small></a><a class="btn" href="../downloads/u1/u1-code.zip" download>All code (.zip)<small>19 KB</small></a></div><h2 id="session-map">Session map</h2>
+<div class="keyidea" title="Outcome of this session">
+<p>After this session you can:</p>
+<ol type="1">
+<li>draw the four-layer IoT architecture (device, network, edge, cloud) and say which layer each part of a real system belongs to, and why;</li>
+<li>describe any robot or smart device as a <strong>sense-think-act loop</strong>, and name the things that spoil such a loop: noise, delay, sampling and a weak actuator;</li>
+<li>derive, for a heated room under on/off control, the heater duty cycle, the switching period and a bound on the worst temperature error, and check all three against a simulation;</li>
+<li>estimate the data a node sends per day and its battery life from a handful of numbers, and read the trade-off between reporting often and living long;</li>
+<li>turn a vague idea (“a robot that waters plants”) into a requirements table with numbers, and say which loops must run on the device or edge and which can go to the cloud.</li>
+</ol>
+</div>
+<ul>
+<li><strong>Prerequisites:</strong> Python basics; the exponential function; what a derivative is (a rate of change). Nothing else: every other term is defined in Section 1 or Section 2 before it is used. Electronics begins in Unit 2.</li>
+<li><strong>Difficulty ladder used:</strong> easy → medium → medium-hard → hard (Sections 3.1 to 3.4); the hardest tier is posed as open questions in Section 3.5.</li>
+<li><strong>Deliverables:</strong> this document (.tex, .pdf, .docx), 5 figures, the module <code>codes/foundations/sense_think_act/</code> (a room model, an on/off controller, a sampled noisy delayed sensor loop, and two budget calculators; 7 tests), and the running-project requirements table of Section 7.</li>
+<li><strong>Source anchors:</strong> this Unit states course definitions and derives everything from a model that is written out in full, so it quotes no paper. The four-layer split is a teaching convention (other books use three or seven layers). The latency and battery numbers in Figures 4 and 5 are <strong>assumed round numbers for illustration</strong>, not measurements; every other number was produced by the scripts in <code>figures/</code> and the module’s tests.</li>
+</ul>
+<h2 id="terms-the-term-tree">1. Terms: the term tree</h2>
+<table>
+<colgroup>
+<col style="width: 22%" />
+<col style="width: 14%" />
+<col style="width: 37%" />
+<col style="width: 13%" />
+<col style="width: 10%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Term</th>
+<th style="text-align: center;">Symbol</th>
+<th style="text-align: left;">One-line meaning</th>
+<th style="text-align: center;">Where it appears</th>
+<th style="text-align: center;">New / known</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">Internet of Things (IoT)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">many small devices that sense or act and talk over a network</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">device (thing)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the small computer with sensors and actuators at the edge of the system</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">sensor</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">measures a physical quantity and turns it into a number</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">actuator</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">turns a number into a physical effect (heat, motion, flow)</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">controller</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the “think” part: turns measurements into commands</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">robot</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a machine that senses, decides and acts on the physical world by itself</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">sense-think-act loop</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">measure, decide, act, repeat</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">closed loop</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the next command depends on a measurement of the result</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">setpoint</td>
+<td style="text-align: center;"><span class="math inline">r</span></td>
+<td style="text-align: left;">the value we want the measured quantity to have</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">error</td>
+<td style="text-align: center;"><span class="math inline">e</span></td>
+<td style="text-align: left;">measurement minus setpoint in this Unit (positive means too hot)</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">bang-bang (on/off) control</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the actuator is fully on or fully off, nothing between</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">hysteresis (dead band)</td>
+<td style="text-align: center;"><span class="math inline">h</span></td>
+<td style="text-align: left;">a gap between the switch-on and switch-off thresholds that stops rapid flicker</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">time constant</td>
+<td style="text-align: center;"><span class="math inline">\tau</span></td>
+<td style="text-align: left;">the time a first-order system needs to cover 63% of the way to its target</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">first-order system</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">one whose rate of change is proportional to its distance from a target</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">sampling period</td>
+<td style="text-align: center;"><span class="math inline">T_s</span></td>
+<td style="text-align: left;">time between two measurements</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">latency (delay)</td>
+<td style="text-align: center;"><span class="math inline">d</span></td>
+<td style="text-align: left;">time from a measurement being taken until the controller has it</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">noise</td>
+<td style="text-align: center;"><span class="math inline">\sigma</span></td>
+<td style="text-align: left;">random error in a measurement; <span class="math inline">\sigma</span> is its typical size</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">duty cycle</td>
+<td style="text-align: center;"><span class="math inline">D</span></td>
+<td style="text-align: left;">fraction of the time something is on (or awake)</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">gateway / broker</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the network box that collects messages and passes them on</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">edge computing</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">doing the “think” step near the device instead of in a far data centre</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">cloud</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">rented computers in a data centre, reached over the internet</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">payload / overhead</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the useful bytes in a message / the bytes added by headers</td>
+<td style="text-align: center;">4.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">requirement</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a measurable statement of what the system must do or how well</td>
+<td style="text-align: center;">7</td>
+<td style="text-align: center;">new</td>
+</tr>
+</tbody>
+</table>
+<p>Terms <em>used but not taught here</em>: MQTT and Wi-Fi (Unit 5), voltage and current (Unit 2), PID control (Unit 9), degrees of freedom (Unit 8), Kalman filtering (Unit 10). They are named once and not relied on.</p>
+<h2 id="remember">2. Remember</h2>
+<div class="definition" title="The Internet of Things in one sentence">
+<p>The <strong>Internet of Things (IoT)</strong> is a system in which many small <strong>devices</strong>, each with <strong>sensors</strong> (which measure) and <strong>actuators</strong> (which act), send data over a network to computers that store it, analyse it and sometimes send commands back. Example: a soil-moisture node in a greenhouse measures every minute, sends the number over Wi-Fi, and a dashboard in the cloud draws a graph and sends a “water now” command to a valve.</p>
+</div>
+<div class="definition" title="A robot in one sentence">
+<p>A <strong>robot</strong> is a machine that <strong>senses</strong> its surroundings, <strong>thinks</strong> (decides what to do) and <strong>acts</strong> on the physical world, all by itself, over and over. The repeating cycle is the <strong>sense-think-act loop</strong>; the part that does the thinking is the <strong>controller</strong>. A thermostat is the simplest robot; a self-driving rover is a complicated one. IoT and robotics meet because a robot that reports to, and takes orders from, a network is an IoT device that moves.</p>
+</div>
+<div class="definition" title="The four layers used in this course">
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">layer</th>
+<th style="text-align: left;">what lives there</th>
+<th style="text-align: left;">typical hardware</th>
+<th style="text-align: left;">what it decides</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>device</strong></td>
+<td style="text-align: left;">sensors, actuators, the small computer (microcontroller) that reads and drives them</td>
+<td style="text-align: left;">an ESP32 board with a soil sensor and a motor driver</td>
+<td style="text-align: left;">read this pin every second; stop the motor now</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>network</strong></td>
+<td style="text-align: left;">the links and the <strong>gateway</strong> (or <strong>broker</strong>) that collects and forwards messages</td>
+<td style="text-align: left;">Wi-Fi router, a message server</td>
+<td style="text-align: left;">which message goes to whom</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>edge</strong></td>
+<td style="text-align: left;">a bigger computer close to the devices</td>
+<td style="text-align: left;">a Raspberry Pi on the rover or in the greenhouse</td>
+<td style="text-align: left;">plan a path; combine sensors; decide quickly without the internet</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>cloud</strong></td>
+<td style="text-align: left;">rented servers far away</td>
+<td style="text-align: left;">a data centre</td>
+<td style="text-align: left;">store years of data; draw dashboards; train models</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The two words that decide where a computation runs are <strong>latency</strong> (how long a round trip takes) and <strong>bandwidth</strong> (how many bytes per second a link carries). Edge computing exists because the speed of a robot is limited by the first and the bill of a network by the second.</p>
+<p><strong>Memory hooks.</strong></p>
+<ul>
+<li><em>Sense, think, act, report.</em> The first three are a robot; adding “report” makes it an IoT device.</li>
+<li><em>Device = hands, network = nerves, edge = spinal cord, cloud = brain.</em> A reflex (pull your hand from a flame) is handled in the spinal cord and does not wait for the brain; the brain remembers and plans.</li>
+<li><em>Duty cycle = the fraction of the day you are awake.</em> A node that sleeps 99.9% of the time lives far longer than one that never sleeps, at the same awake power.</li>
+</ul>
+<p><strong>Before you read on: three predictions</strong> (answers in Section 10). Write down a guess for each, then check it against the text and figures.</p>
+<ol type="1">
+<li>A heater with a fixed power is switched on and off to keep a room at 21 <span class="math inline">^\circ</span>C while it is 5 <span class="math inline">^\circ</span>C outside. In the long run, about what fraction of the time is the heater on?</li>
+<li>The thermostat receives each reading 5 minutes late. Does the worst temperature error stay about the same, roughly double, or grow much more?</li>
+<li>A battery node reports every minute and lasts about 17 days. If it reports every hour instead, does it last about 17 days <span class="math inline">\times</span> 60, much less than that, or about 17 days <span class="math inline">\times</span> 5?</li>
+</ol>
+<p><strong>Recall quiz</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>Name the four layers in order from the physical world to the data centre.</li>
+<li>What is the difference between a sensor and an actuator?</li>
+<li>Why does a robot’s collision-avoidance loop run on the edge rather than in the cloud?</li>
+<li>What does a hysteresis band do, and what does it cost?</li>
+<li>Which of the two, latency or bandwidth, limits how fast a robot can react?</li>
+</ol>
+<h2 id="understand-the-derivation">3. Understand: the derivation</h2>
+<h3 id="tier-1-easy-intuition-and-a-picture">3.1 Tier 1 (easy): intuition and a picture</h3>
+<p>Think of a thermostat. A sensor reads the room temperature, a rule compares it with the number you set, and a switch turns the heater on or off. Nothing here needs the internet. Now <em>add</em> a Wi-Fi chip that sends the reading to a phone and accepts a new setpoint: it has become an IoT device, because the loop is the same but a <strong>network</strong> has been attached to it. Change the heater into wheels and the setpoint into “go to the dry plant”, and you have a robot. Section 7 starts building exactly that, one layer per Unit.</p>
+<p>What makes the loop work is that it is <strong>closed</strong>: the command depends on a measurement of the result. In an <strong>open loop</strong> the controller acts without looking (turn the heater on for 20 minutes, whatever the room does). Open loops are cheap, and fail whenever anything unexpected happens, such as a door left open. Figure 1 shows a closed loop in action: the room starts at 15 <span class="math inline">^\circ</span>C, the heater is on until the measured temperature passes the upper threshold, then off until it passes the lower threshold, and so on forever.</p>
+<figure>
+<img src="../assets/fig/u1/fig01_loop.png" style="width:95.0%" alt="Heated room under on/off control, setpoint 21 ^\circC, dead band \pm0.5 ^\circC, outside 5 ^\circC. Left (A): ideal sensor, measured every minute. The temperature stays within 0.71 ^\circC of the setpoint and the heater switches 36 times in 180 minutes. Right (B): the same loop with sensor noise (\sigma=0.3 ^\circC) and a 5-minute delay. The controller sees the red trace, not the blue one; the true temperature swings up to 2.01 ^\circC from the setpoint, and the heater switches only 13 times because each decision is based on old data." />
+<figcaption aria-hidden="true">Heated room under on/off control, setpoint 21 <span class="math inline">^\circ</span>C, dead band <span class="math inline">\pm0.5</span> <span class="math inline">^\circ</span>C, outside 5 <span class="math inline">^\circ</span>C. Left (A): ideal sensor, measured every minute. The temperature stays within 0.71 <span class="math inline">^\circ</span>C of the setpoint and the heater switches 36 times in 180 minutes. Right (B): the same loop with sensor noise (<span class="math inline">\sigma=0.3</span> <span class="math inline">^\circ</span>C) and a 5-minute delay. The controller sees the red trace, not the blue one; the true temperature swings up to 2.01 <span class="math inline">^\circ</span>C from the setpoint, and the heater switches only 13 times because each decision is based on old data.</figcaption>
+</figure>
+<p>Read the figure from the bottom panels upwards: the heater trace (bottom) is the <em>action</em>, the red trace is the <em>sense</em>, and the rule that connects them is the <em>think</em>. In B the red trace is not just noisy; it is also <strong>late</strong>, so the controller turns the heater off after the room has already overshot. Noise and delay are the two enemies of every sense-think-act loop. The third, <strong>sampling</strong> (the loop looks only every <span class="math inline">T_s</span> minutes), is already present in A: the true temperature leaves the <span class="math inline">\pm0.5</span> band, to a worst case of 0.71 <span class="math inline">^\circ</span>C, because between two looks the room keeps heating.</p>
+<p>Where should the “think” step live? Figure 2 maps the running project onto the four layers. Fast loops that move things live low (device, edge); slow, data-heavy jobs live high.</p>
+<figure>
+<img src="../assets/fig/u1/fig04_architecture.png" style="width:85.0%" alt="The four layers applied to the Smart Greenhouse Rover. Telemetry (measurements) flows up; commands flow down. A rule of thumb: the faster and more safety-critical the loop, the lower in the stack it runs." />
+<figcaption aria-hidden="true">The four layers applied to the Smart Greenhouse Rover. Telemetry (measurements) flows up; commands flow down. A rule of thumb: the faster and more safety-critical the loop, the lower in the stack it runs.</figcaption>
+</figure>
+<h3 id="tier-2-medium-the-definitions-made-precise">3.2 Tier 2 (medium): the definitions made precise</h3>
+<h4 id="the-plant-the-setpoint-and-the-error">3.2.1 The plant, the setpoint and the error</h4>
+<p>The thing being controlled (here the room) is called the <strong>plant</strong>. The quantity we care about is its <strong>output</strong> <span class="math inline">y(t)</span> (the temperature), the value we want is the <strong>setpoint</strong> <span class="math inline">r</span>, and the <strong>error</strong> is <span class="math display"> e(t)=y(t)-r. \tag{1}</span> (Many books define <span class="math inline">e=r-y</span>; the sign convention does not matter as long as it is used consistently. This course uses <span class="math inline">e=y-r</span> in Unit 1 so that “positive error” means “too hot”, and switches to the control convention <span class="math inline">e=r-y</span> in Unit 9, where it will be flagged again.) The controller’s job is to keep <span class="math inline">e</span> near zero.</p>
+<h4 id="bang-bang-control-with-hysteresis">3.2.2 Bang-bang control with hysteresis</h4>
+<p>The simplest controller has two outputs: heater off (<span class="math inline">u=0</span>) or on (<span class="math inline">u=1</span>). A plain rule “on if <span class="math inline">y&lt;r</span>, off otherwise” would switch many times per second as the measurement jitters around <span class="math inline">r</span>. The standard fix is <strong>hysteresis</strong>: choose a half-width <span class="math inline">h</span> and use two thresholds, <span class="math display"> u\leftarrow\begin{cases}1 &amp; y_{\text{seen}}&lt;r-h\\ 0 &amp; y_{\text{seen}}&gt;r+h\\ \text{unchanged} &amp; \text{otherwise.}\end{cases} \tag{2}</span> The band from <span class="math inline">r-h</span> to <span class="math inline">r+h</span> is the <strong>dead band</strong>. The controller has <em>memory</em>: inside the band it keeps doing what it did last. The module’s class <code>BangBang</code> is exactly this rule, a few lines long. Here <span class="math inline">y_{\text{seen}}</span> is what the controller has received, which is not <span class="math inline">y(t)</span>: the sensor measures only every <strong>sampling period</strong> <span class="math inline">T_s</span>, adds <strong>noise</strong> (random error of typical size <span class="math inline">\sigma</span>), and the value arrives after a <strong>latency</strong> <span class="math inline">d</span>. In the module, <code>simulate(..., sample_period=Ts, delay=d, sigma=sigma)</code> creates exactly this chain.</p>
+<h4 id="the-room-model">3.2.3 The room model</h4>
+<p>For the plant we use Newton’s law of cooling plus a heater: <span class="math display"> \frac{dT}{dt}=-\frac{T-T_{\text{out}}}{\tau}+k\,u. \tag{3}</span> <span class="math inline">T</span> is the room temperature (<span class="math inline">^\circ</span>C), <span class="math inline">T_{\text{out}}</span> the outside temperature, <span class="math inline">u\in\{0,1\}</span> the heater state, <span class="math inline">\tau</span> the <strong>time constant</strong> (minutes) and <span class="math inline">k</span> the heating rate (<span class="math inline">^\circ</span>C per minute when <span class="math inline">u=1</span>). The first term says the room leaks heat to the outside at a rate proportional to the temperature difference; the second says the heater adds heat at a fixed rate. In this Unit <span class="math inline">T_{\text{out}}=5</span> <span class="math inline">^\circ</span>C, <span class="math inline">\tau=60</span> min and <span class="math inline">k=0.5</span> <span class="math inline">^\circ</span>C/min. These are round numbers chosen for clean arithmetic, not a measured house.</p>
+<h3 id="tier-3-medium-hard-the-main-derivations">3.3 Tier 3 (medium-hard): the main derivations</h3>
+<h4 id="solving-the-room-the-first-order-response">3.3.1 Solving the room: the first-order response</h4>
+<p>Equation (3) is a <strong>first-order system</strong>: its rate of change is proportional to the distance from a target. Hold <span class="math inline">u</span> constant and write <span class="math inline">T_\infty=T_{\text{out}}+k\tau u</span>, the temperature the room would finally reach. Then <span class="math inline">\frac{dT}{dt}=-\frac{T-T_\infty}{\tau}</span>, because <span class="math inline">-\frac{T-T_{\text{out}}}{\tau}+ku=-\frac{T-T_{\text{out}}-k\tau u}{\tau}</span>. Substitute <span class="math inline">x=T-T_\infty</span> (a constant offset, so <span class="math inline">\dot x=\dot T</span>): <span class="math display"> \begin{aligned}
+\frac{dx}{dt}&amp;=-\frac{x}{\tau} &amp;&amp;\text{(the rule above)}\\
+\frac{dx}{x}&amp;=-\frac{dt}{\tau} &amp;&amp;\text{(separate the variables)}\\
+\ln x(t)-\ln x(0)&amp;=-\frac{t}{\tau} &amp;&amp;\text{(integrate both sides)}\\
+x(t)&amp;=x(0)\,e^{-t/\tau} &amp;&amp;\text{(exponentiate)}\\
+T(t)&amp;=T_\infty+\big(T(0)-T_\infty\big)e^{-t/\tau}. &amp;&amp;\text{(undo the substitution)}
+\end{aligned} \tag{4}</span> Three facts follow, and the module’s tests check each one. (i) After one time constant, <span class="math inline">t=\tau</span>, the gap to the target has shrunk to <span class="math inline">e^{-1}=0.368</span> of its start: the room has covered 63.2% of the way. The test cools a 25 <span class="math inline">^\circ</span>C room outside at 5 <span class="math inline">^\circ</span>C for 60 minutes and finds <span class="math inline">5+20e^{-1}=12.36</span> <span class="math inline">^\circ</span>C to <span class="math inline">10^{-9}</span>. (ii) With the heater on forever, the room approaches <span class="math inline">T_\infty=5+0.5\times60=35</span> <span class="math inline">^\circ</span>C; with it off, 5 <span class="math inline">^\circ</span>C. (iii) Because the formula is exact for constant <span class="math inline">u</span>, the simulator advances in steps of any size without numerical error; the only approximation in the whole simulation is that <span class="math inline">u</span> changes at the discrete times at which the controller looks.</p>
+<h4 id="the-heater-duty-cycle">3.3.2 The heater duty cycle</h4>
+<p>In steady operation the temperature just oscillates around the setpoint, so its <em>average</em> rate of change is zero. Average equation (3) over many cycles with <span class="math inline">T\approx r</span> and let <span class="math inline">D</span> be the fraction of time the heater is on: <span class="math display"> \begin{aligned}
+0&amp;=-\frac{r-T_{\text{out}}}{\tau}+kD &amp;&amp;\text{(average of }dT/dt\text{ is zero)}\\
+D&amp;=\frac{r-T_{\text{out}}}{k\,\tau}. &amp;&amp;\text{(solve for }D)
+\end{aligned} \tag{5}</span> With the Unit’s numbers <span class="math inline">D=(21-5)/(0.5\times60)=16/30=0.5333</span>. The simulator, run with a very fine sampling step so that it behaves like a continuous loop, gives a duty cycle of 0.5335. In Figure 1A, with one reading per minute, it gives 0.533; in B, with noise and delay, 0.539. The duty cycle is a property of the <em>room and the setpoint</em>, not of the controller details: whatever the dead band, the heater must supply the heat that leaks out. Prediction 1 of Section 2 is answered: about 53%.</p>
+<p><em>Feasibility.</em> Equation (5) has a message: <span class="math inline">D\le1</span> is required, i.e. <span class="math inline">r-T_{\text{out}}\le k\tau</span>, or <span class="math inline">T_\infty\ge r</span>. If the outside is at <span class="math inline">-15</span> <span class="math inline">^\circ</span>C the formula gives <span class="math inline">D=36/30=1.2</span>: impossible, because the heater can lift the room to at most <span class="math inline">T_{\text{out}}+k\tau=15</span> <span class="math inline">^\circ</span>C. <strong>The actuator must be strong enough for the job</strong>, a point that returns for motors in Unit 2.</p>
+<h4 id="the-switching-period">3.3.3 The switching period</h4>
+<p>Inside the dead band the heating and cooling speeds are found by evaluating (3) at <span class="math inline">T=r</span>. Heating (<span class="math inline">u=1</span>): <span class="math inline">s_{\text{on}}=-\frac{r-T_{\text{out}}}{\tau}+k=-0.2667+0.5=0.2333</span> <span class="math inline">^\circ</span>C/min. Cooling (<span class="math inline">u=0</span>): <span class="math inline">s_{\text{off}}=\frac{r-T_{\text{out}}}{\tau}=0.2667</span> <span class="math inline">^\circ</span>C/min (as a magnitude). If a reading arrived at every instant, one cycle would cross the whole band of width <span class="math inline">2h</span> upward and then downward: <span class="math display"> P=\frac{2h}{s_{\text{on}}}+\frac{2h}{s_{\text{off}}}=\frac{1.0}{0.2333}+\frac{1.0}{0.2667}=4.286+3.750=8.04\ \text{min}. \tag{6}</span> The fine-step simulation gives a period of 8.06 minutes, and solving equation (4) exactly for each crossing (<span class="math inline">t_{\text{on}}=\tau\ln\frac{35-20.5}{35-21.5}=4.288</span> min, <span class="math inline">t_{\text{off}}=\tau\ln\frac{21.5-5}{20.5-5}=3.751</span> min) gives 8.039 minutes and a duty cycle of 0.5334, which agrees with equation (5) to three decimals. (The slope formula and the exact crossing differ slightly because the slopes change as the temperature moves across the band; we evaluated them at the setpoint.) With one reading per minute the period grows to 10.0 minutes, which is why Figure 1A has 36 switches in 180 minutes rather than <span class="math inline">2\times180/8.04=45</span>: <strong>sampling slows the loop down and widens its swing</strong>.</p>
+<h4 id="how-wrong-can-the-temperature-get">3.3.4 How wrong can the temperature get?</h4>
+<p>The controller notices that a threshold has been crossed only when the next reading arrives. After the temperature crosses <span class="math inline">r+h</span> it can keep rising for at most one sampling period <span class="math inline">T_s</span> (until the next reading) plus the latency <span class="math inline">d</span> (until that reading reaches the controller) before the heater is switched off, and in that time it changes by at most the maximum slope. The same holds on the way down. Therefore <span class="math display"> \max|e|\;\le\;h+s_{\max}\,(T_s+d),\qquad s_{\max}=\max(s_{\text{on}},s_{\text{off}})=0.2667\ ^\circ\mathrm{C/min}. \tag{7}</span> This is an upper bound, not an equality, because a reading may arrive just after the crossing (a short wait) and because the slopes shrink as the temperature moves away from the setpoint. It still tells us the structure of the error: a fixed part <span class="math inline">h</span> chosen by design, and a part proportional to the <em>age of the information</em> <span class="math inline">T_s+d</span>. Table 1 checks it against the simulator; the bound holds in every row.</p>
+<table>
+<caption>worst temperature error after warm-up against link delay (<span class="math inline">h=0.5</span> <span class="math inline">^\circ</span>C, <span class="math inline">T_s=1</span> min, no noise). The bound is loose for long delays (30 min delay: bound 8.77, measured 6.65) because the heating and cooling slopes fall as the room moves away from the setpoint. Prediction 2 of Section 2 is answered: a 5-minute delay takes the worst error from 0.71 to 1.97 <span class="math inline">^\circ</span>C, nearly three times, and it keeps growing roughly in proportion to the delay.</caption>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: right;">delay <span class="math inline">d</span> (min)</th>
+<th style="text-align: right;">measured worst <span class="math inline">\lvert e\rvert</span> (<span class="math inline">^\circ</span>C)</th>
+<th style="text-align: right;">bound (7) (<span class="math inline">^\circ</span>C)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.712</td>
+<td style="text-align: right;">0.767</td>
+</tr>
+<tr>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">0.979</td>
+<td style="text-align: right;">1.033</td>
+</tr>
+<tr>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">1.232</td>
+<td style="text-align: right;">1.300</td>
+</tr>
+<tr>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">1.973</td>
+<td style="text-align: right;">2.100</td>
+</tr>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">3.057</td>
+<td style="text-align: right;">3.433</td>
+</tr>
+<tr>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">4.993</td>
+<td style="text-align: right;">6.100</td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">6.653</td>
+<td style="text-align: right;">8.767</td>
+</tr>
+</tbody>
+</table>
+<h3 id="tier-4-hard-generalisation-edge-cases-what-the-textbooks-gloss-over">3.4 Tier 4 (hard): generalisation, edge cases, what the textbooks gloss over</h3>
+<h4 id="choosing-the-dead-band-noise-against-flicker">3.4.1 Choosing the dead band: noise against flicker</h4>
+<p>A wide dead band means few switches (good for a mechanical relay with a limited number of operations, and for a battery) but a larger error. Figure 3 (right) measures this: with <span class="math inline">h</span> from 0.1 to 2.0 <span class="math inline">^\circ</span>C, the heater switches 226, 140, 84, 48 and 25 times in 420 minutes, while the worst error rises from 0.36 to 2.21 <span class="math inline">^\circ</span>C. A 20-fold wider band cuts the switching 9-fold and raises the worst error 6-fold (equation (7): the error is <span class="math inline">h</span> plus a fixed staleness term), so there is no free lunch: you buy fewer switches with accuracy.</p>
+<figure>
+<img src="../assets/fig/u1/fig02_tradeoff.png" style="width:95.0%" alt="Left: the worst temperature error after warm-up grows almost in proportion to the link delay (0 to 30 min; h=0.5 ^\circC). Right: widening the dead band from 0.1 to 2.0 ^\circC cuts heater switching from 226 to 25 switches per 420 minutes but raises the worst error from 0.36 to 2.21 ^\circC." />
+<figcaption aria-hidden="true">Left: the worst temperature error after warm-up grows almost in proportion to the link delay (0 to 30 min; <span class="math inline">h=0.5</span> <span class="math inline">^\circ</span>C). Right: widening the dead band from 0.1 to 2.0 <span class="math inline">^\circ</span>C cuts heater switching from 226 to 25 switches per 420 minutes but raises the worst error from 0.36 to 2.21 <span class="math inline">^\circ</span>C.</figcaption>
+</figure>
+<p>Noise forces the same choice from the other side. With the band fixed at <span class="math inline">h=0.5</span> <span class="math inline">^\circ</span>C, increasing the sensor noise from <span class="math inline">\sigma=0</span> to 0.1, 0.3 and 0.6 <span class="math inline">^\circ</span>C changes the number of switches from 84 to 84, 93 and 133 (one seed; 480 minutes). Small noise is hidden inside the band; noise comparable to <span class="math inline">h</span> makes the controller flicker near the thresholds. A practical rule that follows from this and is checked here only in this one setting: make <span class="math inline">h</span> clearly larger than a few <span class="math inline">\sigma</span>, or filter the measurement first (Unit 3).</p>
+<h4 id="where-the-think-step-runs-a-latency-budget">3.4.2 Where the “think” step runs: a latency budget</h4>
+<p>A round trip to the cloud is a chain of stages, and each adds latency. Figure 4 compares an edge loop with a cloud loop for a rover. The stage times are <strong>assumed round numbers</strong>: 5 ms to read a sensor, 5 ms to decide on the rover, 5 ms to drive the motor (edge total 15 ms); the cloud route replaces the decision by a 60 ms uplink, a 20 ms cloud decision and a 60 ms downlink (total 150 ms). During that time the rover keeps moving at speed <span class="math inline">v</span> and travels <span class="math inline">v\times</span> latency blind.</p>
+<figure>
+<img src="../assets/fig/u1/fig05_latency.png" style="width:95.0%" alt="Left: assumed latency budget of an edge loop (15 ms) and a cloud loop (150 ms). Right: the distance a rover travels before its decision takes effect, for four speeds. At 0.5 m/s the cloud loop is blind for 7.5 cm and the edge loop for 0.75 cm; at 2 m/s, 30 cm against 3 cm." />
+<figcaption aria-hidden="true">Left: assumed latency budget of an edge loop (15 ms) and a cloud loop (150 ms). Right: the distance a rover travels before its decision takes effect, for four speeds. At 0.5 m/s the cloud loop is blind for 7.5 cm and the edge loop for 0.75 cm; at 2 m/s, 30 cm against 3 cm.</figcaption>
+</figure>
+<p>The ratio is simply <span class="math inline">150/15=10</span> at every speed, so the <em>gap</em> grows with speed. This is the real reason for edge computing in robots, and it reappears in Unit 6 as a design rule.</p>
+<h4 id="reporting-rate-energy-and-data-volume">3.4.3 Reporting rate, energy and data volume</h4>
+<p>A node that is awake for <span class="math inline">t_{\text{act}}</span> seconds per report at current <span class="math inline">I_{\text{act}}</span> and asleep the rest of the period <span class="math inline">P</span> at current <span class="math inline">I_{\text{slp}}</span> draws the average current <span class="math display"> \bar I=\frac{I_{\text{act}}t_{\text{act}}+I_{\text{slp}}\,(P-t_{\text{act}})}{P}, \tag{8}</span> a weighted average with weights equal to the time fractions. Its battery life in days is <span class="math inline">\text{life}=\dfrac{C\,\eta}{24\,\bar I}</span> for capacity <span class="math inline">C</span> (mAh) and usable fraction <span class="math inline">\eta</span> (the module uses <span class="math inline">\eta=0.8</span>). The data sent per day is <span class="math inline">(\text{payload}+\text{overhead})\times86400/P</span> bytes. The data figures need no assumptions beyond the byte counts; the current figures use assumed values (120 mA awake for 2 s per report, 0.01 mA asleep, 2000 mAh, <span class="math inline">\eta=0.8</span>).</p>
+<figure>
+<img src="../assets/fig/u1/fig03_budget.png" style="width:95.0%" alt="Left: battery life against reporting period for the assumed node (log scales). Reporting every 60 s lasts 16.6 days; every 900 s, 241 days; every 3600 s, 870 days. Right: data sent per day against reporting period for 24 bytes of payload and 60 bytes of overhead: from 1.45 MB/day at 5 s down to 0.002 MB/day at an hour." />
+<figcaption aria-hidden="true">Left: battery life against reporting period for the assumed node (log scales). Reporting every 60 s lasts 16.6 days; every 900 s, 241 days; every 3600 s, 870 days. Right: data sent per day against reporting period for 24 bytes of payload and 60 bytes of overhead: from 1.45 MB/day at 5 s down to 0.002 MB/day at an hour.</figcaption>
+</figure>
+<p>Prediction 3 is answered by Figure 5: going from one report per minute to one per hour does <em>not</em> give 60 times the life but <span class="math inline">869.6/16.6\approx52</span> times. At long periods the sleep current starts to matter (at 3600 s the average current is 0.077 mA, of which the sleep current alone is 0.01 mA), so the gain flattens. The fixed cost per report (2 s awake) dominates until the period is long, a point Unit 4 attacks with deep sleep.</p>
+<h3 id="tier-5-hardest-open-questions">3.5 Tier 5 (hardest): open questions</h3>
+<ol type="1">
+<li><strong>Who owns the emergency stop?</strong> A cloud-side safety check can see the whole fleet; a device-side check is fast. Can a design give a guarantee that holds when the network is down, and what must the device do when it loses the link: stop, continue, or return home? Argue each case for a greenhouse rover and for a delivery robot on a pavement.</li>
+<li><strong>Is <span class="math inline">T_s+d</span> the right measure of staleness?</strong> Equation (7) treats age as the only thing that matters. What changes when the <em>information is old but the system is slow</em> (the room has <span class="math inline">\tau=60</span> min, so a 1-second delay is irrelevant) versus <em>old and the system is fast</em> (a motor with <span class="math inline">\tau=50</span> ms)? Express the condition as a ratio.</li>
+<li><strong>When does adding a network make a system worse?</strong> Name one case where a local closed loop was perfectly adequate and the IoT version added only cost, delay and attack surface (Unit 7).</li>
+</ol>
+<h2 id="apply">4. Apply</h2>
+<h3 id="worked-problems">4.1 Worked problems</h3>
+<p><strong>Problem 1 (duty cycle and feasibility).</strong> A greenhouse is kept at 22 <span class="math inline">^\circ</span>C. The heater supplies <span class="math inline">k=0.4</span> <span class="math inline">^\circ</span>C/min and the time constant is <span class="math inline">\tau=75</span> min. (a) What duty cycle is needed on a night at 4 <span class="math inline">^\circ</span>C? (b) What is the coldest night the heater can handle?</p>
+<p><em>Solution.</em> (a) <span class="math inline">D=\dfrac{22-4}{0.4\times75}=\dfrac{18}{30}=0.60</span>. (b) Need <span class="math inline">D\le1</span>: <span class="math inline">22-T_{\text{out}}\le0.4\times75=30</span>, so <span class="math inline">T_{\text{out}}\ge-8</span> <span class="math inline">^\circ</span>C. Below <span class="math inline">-8</span> <span class="math inline">^\circ</span>C the heater is too weak at any controller setting.</p>
+<p><strong>Problem 2 (data volume).</strong> A node sends a 24-byte payload plus 60 bytes of headers every 60 s. How much data per day does one node send, and 200 nodes?</p>
+<p><em>Solution.</em> <span class="math inline">84\ \text{B}\times1440=120{,}960</span> B <span class="math inline">=0.121</span> MB per node per day, so 200 nodes send <span class="math inline">24.2</span> MB per day. (The figure script prints 0.121 MB/day for the 60 s row.)</p>
+<p><strong>Problem 3 (battery life).</strong> Use the assumed node of Section 3.4.3 at a 60 s reporting period. Find the average current and the battery life.</p>
+<p><em>Solution.</em> <span class="math inline">\bar I=\dfrac{120\times2+0.01\times58}{60}=\dfrac{240.58}{60}=4.0097</span> mA. Life <span class="math inline">=\dfrac{2000\times0.8}{24\times4.0097}=16.63</span> days, matching Figure 5 (16.6 days).</p>
+<p><strong>Problem 4 (blind distance).</strong> A rover moves at 0.5 m/s. How far does it travel during a 150 ms cloud round trip, and during a 15 ms edge loop?</p>
+<p><em>Solution.</em> <span class="math inline">0.5\times0.150=0.075</span> m <span class="math inline">=7.5</span> cm and <span class="math inline">0.5\times0.015=0.0075</span> m <span class="math inline">=0.75</span> cm, as in Figure 4.</p>
+<h3 id="code-and-figures">4.2 Code and figures</h3>
+<p>The core of the module is the closed loop of <code>simulate</code>: every step, take a reading if one is due, deliver any reading whose delay has elapsed, let the controller decide, then advance the room. Using it takes a few lines:</p>
+<pre class="python"><code>import sense_think_act as S
+
+room = S.Room(T0=15.0, T_out=5.0, tau=60.0, k=0.5)
+ctrl = S.BangBang(setpoint=21.0, h=0.5)
+res  = S.simulate(ctrl, room, t_end=240, sample_period=1.0, delay=5.0, sigma=0.3)
+print(S.metrics(res, setpoint=21.0))      # mean/max error, duty cycle, switch count
+print(S.battery_life_days(2000, 4.0097))  # 16.6 days</code></pre>
+<p>The full code, with its README, is in <code>codes/foundations/sense_think_act/</code>; its seven tests check the exact exponential solution, the equilibrium <span class="math inline">T_\infty=35</span> <span class="math inline">^\circ</span>C, the hysteresis memory, that the ideal loop stays inside the band, that delay widens the swing, determinism of the seeded noise, and the two calculators. All figures of this Unit were produced by the scripts <code>fig01_loop.py</code> to <code>fig05_latency.py</code> and the theory check <code>analysis_theory.py</code> in <code>figures/</code>. (The figure files are numbered in the order they were made; the figures in this document are numbered in the order they appear.)</p>
+<p><em>What would look different if the theory were wrong?</em> If equation (5) were wrong, the heater duty in the ideal simulation would differ from <span class="math inline">16/30</span>; it is 0.5335. If the bound (7) were wrong, some row of Table 1 would show a measured error above the bound; none does.</p>
+<h2 id="analyze">5. Analyze</h2>
+<p><strong>Limits.</strong> As <span class="math inline">T_s\to0</span> and <span class="math inline">d\to0</span>, equation (7) gives <span class="math inline">\max|e|\to h</span>, and equation (6) gives the continuous-time period. As <span class="math inline">h\to0</span> the number of switches grows without bound (226 switches already at <span class="math inline">h=0.1</span> <span class="math inline">^\circ</span>C): a perfect on/off controller with perfect sensing would chatter infinitely fast. Real relays and heaters are damaged by this, which is why the dead band exists at all.</p>
+<p><strong>Dominance.</strong> For short delays the error is dominated by the design band <span class="math inline">h</span>; for delays much larger than <span class="math inline">h/s_{\max}=0.5/0.267\approx1.9</span> min the error is dominated by staleness <span class="math inline">s_{\max}(T_s+d)</span>. In Table 1 the crossover is visible at delay 2 min: the staleness term (<span class="math inline">0.2667\times3=0.8</span> <span class="math inline">^\circ</span>C) already exceeds <span class="math inline">h</span> (0.5 <span class="math inline">^\circ</span>C).</p>
+<p><strong>Order-of-magnitude estimate.</strong> Before running anything, one can estimate the period: crossing a band of 1 <span class="math inline">^\circ</span>C at about 0.25 <span class="math inline">^\circ</span>C/min takes about 4 minutes each way, so about 8 minutes: the simulation gives 8.06.</p>
+<p><strong>Sensitivity.</strong> The duty cycle depends on three numbers only (<span class="math inline">r-T_{\text{out}}</span>, <span class="math inline">k</span>, <span class="math inline">\tau</span>). Dropping the outside temperature from 5 to <span class="math inline">-5</span> <span class="math inline">^\circ</span>C raises <span class="math inline">D</span> from 0.533 to 0.867; the heater works 63% harder. This is why heating bills move so much with the weather.</p>
+<p><strong>Failure modes.</strong> (1) <em>Actuator too weak</em> (<span class="math inline">D&gt;1</span>): no controller can fix it. (2) <em>Stale data</em> (<span class="math inline">T_s+d</span> large against the system’s time scale): the loop overshoots. (3) <em>Noise comparable to <span class="math inline">h</span></em>: flicker. (4) <em>Lost network</em>: if the loop depends on a link and the link fails, the actuator keeps its last command; the heater might stay on. A safe design needs a timeout that drives the actuator to a safe state.</p>
+<p><strong>Items used from the pedagogy checklist:</strong> limits, dominance, estimate, sensitivity, failure modes, invariants (the exact solution of equation (4) is a test), and constructed-versus-measured (the budget numbers are constructed from assumptions; the loop numbers are from the model).</p>
+<h2 id="evaluate">6. Evaluate</h2>
+<p><strong>Alternatives to on/off control.</strong> An on/off controller needs no model and no tuning, which is why it runs in every kettle and fridge. Its cost is a permanent ripple, which Figure 1 makes visible. A proportional controller varies the heater power with the error and gives a smaller ripple; this is Unit 9. Choose on/off when the actuator is a relay or valve that can only be on or off, the ripple is acceptable and the cost matters.</p>
+<p><strong>Alternatives to the cloud.</strong> Table 2 compares where to put the “think” step, for the greenhouse rover.</p>
+<table>
+<caption>assigning decisions to layers for the Smart Greenhouse Rover by two questions: how fast must the answer come, and how much data does it need?</caption>
+<colgroup>
+<col style="width: 21%" />
+<col style="width: 28%" />
+<col style="width: 28%" />
+<col style="width: 21%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">decision</th>
+<th style="text-align: center;">needs low latency?</th>
+<th style="text-align: center;">needs lots of data?</th>
+<th style="text-align: left;">best layer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">stop before hitting a pot</td>
+<td style="text-align: center;">yes (ms)</td>
+<td style="text-align: center;">no</td>
+<td style="text-align: left;">device or edge</td>
+</tr>
+<tr>
+<td style="text-align: left;">follow the planned path</td>
+<td style="text-align: center;">yes (10 to 100 ms)</td>
+<td style="text-align: center;">no</td>
+<td style="text-align: left;">edge</td>
+</tr>
+<tr>
+<td style="text-align: left;">decide which plants to water today</td>
+<td style="text-align: center;">no (minutes)</td>
+<td style="text-align: center;">some</td>
+<td style="text-align: left;">edge or cloud</td>
+</tr>
+<tr>
+<td style="text-align: left;">draw a month of soil-moisture trends</td>
+<td style="text-align: center;">no</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: left;">cloud</td>
+</tr>
+<tr>
+<td style="text-align: left;">update the watering model from a season of data</td>
+<td style="text-align: center;">no</td>
+<td style="text-align: center;">very much</td>
+<td style="text-align: left;">cloud</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Context.</strong> The idea behind the “Internet of Things” is older than the name: the thermostat, the factory controller and the remote-monitoring system were all sensor-network-controller systems long before. What changed is cost: a Wi-Fi microcontroller board is now cheap enough that adding a network link to almost anything is a design option. The ethical consequences follow from that same fact: a device that is cheap to connect is cheap to leave insecure (Unit 7), and a sensor in a home or a field is a source of personal or commercial data. A robot adds physical risk: it can hurt someone, so safety must be designed in (a stop that works when software fails), not added later.</p>
+<p><strong>When NOT to use IoT.</strong> When a local loop is enough, when failure of the link would be dangerous, when the data are sensitive and the benefit of sharing them is small, or when the device cannot be updated for years (an unpatched connected device is a liability).</p>
+<p><strong>Honesty about this Unit’s numbers.</strong> The loop numbers come from a simple one-room model with round-number parameters. The battery and latency numbers use assumed values and show <em>shapes</em> (how things scale with the period or the speed), not predictions for any real board. Unit 2 replaces the assumed currents by a power budget built from component numbers.</p>
+<h2 id="create">7. Create</h2>
+<div class="create" title="What you can build from this">
+<ol type="1">
+<li><strong>Make the room colder, then find the limit.</strong> Change <code>Room(T_out=-5)</code> and find by simulation when the heater duty reaches 1. Compare with equation (5).</li>
+<li><strong>A requirements table for the Smart Greenhouse Rover</strong> (the running project; read the table below now, revise it in later Units).</li>
+<li><strong>Add a timeout.</strong> Extend <code>simulate</code> so that if no reading arrives for 10 minutes the heater is switched off (a safe state), and measure the temperature when the link drops for 30 minutes.</li>
+<li><strong>Combine with the next Unit.</strong> Pick the node’s battery and radio from the power numbers of Unit 2 and replace the assumed currents in <code>fig03_budget.py</code>.</li>
+<li><strong>Could become a package module:</strong> <code>iotrobotics.loops</code> with <code>Room</code>, <code>BangBang</code>, <code>simulate</code>, <code>metrics</code>, reused by Units 3, 6 and 9.</li>
+</ol>
+</div>
+<p><strong>Running project, Layer 0: requirements for the Smart Greenhouse Rover.</strong> A small differential-drive robot patrols a greenhouse, measures soil moisture and air temperature, reports to a dashboard and drives to plants that need water. The numbers are <em>targets to be checked</em> by the simulations of later Units, not facts.</p>
+<table>
+<caption>requirements, each with a number and the Unit where it will be tested. R3 already follows from Figure 4: a 150 ms cloud loop at 0.5 m/s gives 7.5 cm of blind travel and fails R3, so the collision stop must live on the rover.</caption>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">id</th>
+<th style="text-align: left;">requirement</th>
+<th style="text-align: left;">target</th>
+<th style="text-align: left;">checked in</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">R1</td>
+<td style="text-align: left;">soil moisture and temperature reported per zone</td>
+<td style="text-align: left;">every 60 s</td>
+<td style="text-align: left;">Unit 5</td>
+</tr>
+<tr>
+<td style="text-align: left;">R2</td>
+<td style="text-align: left;">telemetry latency to the dashboard</td>
+<td style="text-align: left;">under 2 s</td>
+<td style="text-align: left;">Unit 12</td>
+</tr>
+<tr>
+<td style="text-align: left;">R3</td>
+<td style="text-align: left;">rover stops before an obstacle</td>
+<td style="text-align: left;">blind distance under 5 cm at 0.5 m/s, i.e. loop under 100 ms</td>
+<td style="text-align: left;">Unit 11</td>
+</tr>
+<tr>
+<td style="text-align: left;">R4</td>
+<td style="text-align: left;">node battery life (fixed soil node)</td>
+<td style="text-align: left;">at least 30 days</td>
+<td style="text-align: left;">Unit 2</td>
+</tr>
+<tr>
+<td style="text-align: left;">R5</td>
+<td style="text-align: left;">position error after a 20 m patrol</td>
+<td style="text-align: left;">under 10% of distance, then corrected</td>
+<td style="text-align: left;">Unit 8, Unit 10</td>
+</tr>
+<tr>
+<td style="text-align: left;">R6</td>
+<td style="text-align: left;">plants watered when dry</td>
+<td style="text-align: left;">at least 90% of requests succeed</td>
+<td style="text-align: left;">Unit 12</td>
+</tr>
+<tr>
+<td style="text-align: left;">R7</td>
+<td style="text-align: left;">only authorised commands move the rover</td>
+<td style="text-align: left;">all commands authenticated</td>
+<td style="text-align: left;">Unit 7</td>
+</tr>
+<tr>
+<td style="text-align: left;">S1</td>
+<td style="text-align: left;">rover stops when the link is lost for more than 5 s</td>
+<td style="text-align: left;">safe state in 5 s</td>
+<td style="text-align: left;">Unit 7</td>
+</tr>
+</tbody>
+</table>
+<h2 id="visualization-lesson">8. Visualization lesson</h2>
+<table>
+<caption>the chart types of this Unit. Ladder: <em>remember</em> the names; <em>understand</em> when each is used; <em>apply</em> the call; <em>analyse</em> how it misleads; <em>evaluate</em> whether a table would do better (for Table 1 a table beats a chart, because the reader wants exact values); <em>create</em> a new one.</caption>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Chart type</th>
+<th style="text-align: left;">Best for</th>
+<th style="text-align: left;">How it misleads</th>
+<th style="text-align: left;">matplotlib call</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">line over time (time series)</td>
+<td style="text-align: left;">a quantity changing with time; here <span class="math inline">T(t)</span></td>
+<td style="text-align: left;">a y-axis that does not start at zero exaggerates swings; two series on different scales invite false correlation</td>
+<td style="text-align: left;"><code>ax.plot(t, y)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">step plot</td>
+<td style="text-align: left;">a signal that is constant between changes (the heater state)</td>
+<td style="text-align: left;">a normal line would draw false slopes between on and off</td>
+<td style="text-align: left;"><code>ax.step(t, u, where="post")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">shaded band</td>
+<td style="text-align: left;">a tolerance or acceptable region (the dead band)</td>
+<td style="text-align: left;">an unlabelled band is read as data</td>
+<td style="text-align: left;"><code>ax.axhspan(lo, hi, alpha=0.25)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">dual-axis (twin) plot</td>
+<td style="text-align: left;">two quantities with different units against one variable</td>
+<td style="text-align: left;">the visual crossing point is an artefact of the chosen scales; use sparingly and label both axes</td>
+<td style="text-align: left;"><code>b2 = ax.twinx()</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">log-log line</td>
+<td style="text-align: left;">quantities spanning orders of magnitude (period 5 s to 1 hour)</td>
+<td style="text-align: left;">straight lines mean power laws only if both axes are log; the eye underestimates differences at the high end</td>
+<td style="text-align: left;"><code>ax.loglog(x, y)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">stacked horizontal bar</td>
+<td style="text-align: left;">a total made of stages (latency budget)</td>
+<td style="text-align: left;">only the first segment is easy to compare across bars</td>
+<td style="text-align: left;"><code>ax.barh(y, w, left=cum)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">layer diagram</td>
+<td style="text-align: left;">structure, not data</td>
+<td style="text-align: left;">decoration without information</td>
+<td style="text-align: left;"><code>FancyBboxPatch</code>, <code>ax.annotate</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading Figure 1 as a chart.</strong> Panels share the x-axis (<code>sharex=True</code>) so that the heater switch times line up with the temperature turning points; this is the main design decision. <strong>Reading Figure 4 (right).</strong> The bars start at zero (they must, since length encodes value). The two series use the same units, so grouped bars are fair; the ratio of 10 can be seen in every group.</p>
+<h2 id="problem-set">9. Problem set</h2>
+<div class="exercise" title="Graded exercises">
+<ol type="1">
+<li>(easy) A room is kept at 20 <span class="math inline">^\circ</span>C, outside is 10 <span class="math inline">^\circ</span>C, <span class="math inline">k=0.5</span> <span class="math inline">^\circ</span>C/min, <span class="math inline">\tau=60</span> min. What heater duty cycle is needed?</li>
+<li>(medium) A node sends a 30-byte payload with 50 bytes of overhead every 20 s. Find bytes per day, and the battery life if it draws 15 mA on average from a 3000 mAh battery with 80% usable.</li>
+<li>(medium-hard) For the room of Unit 1 (<span class="math inline">h=0.5</span>, <span class="math inline">T_s=1</span> min), use equation (7) to find the largest link delay for which the worst error stays under 2.5 <span class="math inline">^\circ</span>C. Then run <code>simulate</code> with that delay and check whether the measured error is below 2.5. Is the bound conservative?</li>
+<li>(hard) Derive the duty cycle of equation (5) a second way: compute the exact on-time and off-time for crossing the band with the exponential solution (4) (use <span class="math inline">T_\infty</span> for each state), and compare <span class="math inline">t_{\text{on}}/(t_{\text{on}}+t_{\text{off}})</span> with <span class="math inline">16/30</span> for <span class="math inline">h=0.5</span>.</li>
+<li>(hardest) Modify <code>simulate</code> so that the controller receives readings over a lossy link that drops each reading with probability <span class="math inline">p</span>. Measure the worst error for <span class="math inline">p=0,\,0.2,\,0.5,\,0.8</span>. Explain the result using <span class="math inline">T_s+d</span>, and propose a safe rule for long silences.</li>
+</ol>
+</div>
+<h2 id="retrieval-practice-and-recap">10. Retrieval practice and recap</h2>
+<p><strong>Answers to the Section 2 predictions.</strong></p>
+<ol type="1">
+<li>About 53% (<span class="math inline">16/30=0.533</span>; simulation 0.533 to 0.539).</li>
+<li>It grows much more than double: from 0.71 to 1.97 <span class="math inline">^\circ</span>C, nearly three times.</li>
+<li>Neither of the first two: it lasts about 52 times longer (16.6 to 869.6 days), not 60, because the sleep current starts to matter.</li>
+</ol>
+<p><strong>Answers to the Section 2 recall quiz.</strong></p>
+<ol type="1">
+<li>Device, network, edge, cloud.</li>
+<li>A sensor turns a physical quantity into a number; an actuator turns a number into a physical effect.</li>
+<li>Because a cloud round trip (assumed 150 ms) lets a moving rover travel 7.5 cm at 0.5 m/s before it reacts, ten times more than an edge loop (15 ms).</li>
+<li>It stops the controller from flickering around the threshold; it costs a larger error (about <span class="math inline">h</span> plus the staleness term).</li>
+<li>Latency (bandwidth limits cost and bulk data, not reaction time).</li>
+</ol>
+<p><strong>Explain it to a friend.</strong></p>
+<ul>
+<li>Why does a thermostat need a gap between its “on” and “off” temperatures?</li>
+<li>Why does a robot not ask the cloud before braking?</li>
+<li>Why does reporting every hour instead of every minute not give exactly 60 times the battery life?</li>
+</ul>
+<p><strong>Re-derive by hand tomorrow, without looking:</strong> (a) the solution of <span class="math inline">\dot T=-(T-T_\infty)/\tau</span>; (b) the duty cycle <span class="math inline">D=(r-T_{\text{out}})/(k\tau)</span>; (c) the average-current formula and the battery life of a duty-cycled node.</p>
+<h2 id="where-next">11. Where next</h2>
+<ul>
+<li><strong>Unit 2</strong> gives the missing electronics: what a volt, an amp and a battery really are, how to size a resistor, how to drive a motor, and how to build the power budget that Figure 5 only assumed.</li>
+<li>Terms named here but not taught: voltage and current (Unit 2), MQTT and Wi-Fi (Unit 5), PID (Unit 9), degrees of freedom (Unit 8). They are registered in CURRICULUM.md.</li>
+<li><strong>Open threads:</strong> the loop numbers use a one-room model with round numbers (no real house measured); the battery and latency values are assumed; the “lossy link” experiment of Exercise 5 is left to the learner.</li>
+</ul>
+<p style="display:flex;justify-content:space-between;margin-top:40px"><span></span><a class="btn" href="u2.html">Electronics &rarr;</a></p></article></div></main>
+<footer><div class="wrap">Internet of Things and Robotics crash course · Code is MIT-licensed; PDFs are for study use. Companion to the <a href="../../index.html">Generative AI and LLMs course</a>.</div></footer>
+<script>
+document.getElementById('theme').onclick=function(){var d=document.documentElement,c=d.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'),n=c==='dark'?'light':'dark';d.dataset.theme=n;try{localStorage.setItem('theme',n)}catch(e){}};
+</script>
+<script src="../../assets/vendor/katex/katex.min.js"></script><script>document.querySelectorAll(".math").forEach(function(n){var d=n.classList.contains("display");var t=n.textContent.replace(/^\\[\(\[]|\\[\)\]]$/g,"");try{katex.render(t,n,{displayMode:d,throwOnError:false})}catch(e){}});</script></body></html>

@@ -1,0 +1,696 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unit 6: IoT Data, Cloud and Edge Computing: Payloads, Series, Alerts, Twins · IoT and Robotics</title>
+<meta name="description" content="From volts and sensors to MQTT, security, kinematics, control, localisation and navigation, built around one running project: a Smart Greenhouse Rover. Twelve units with a PDF and runnable code each, a 14-lab track and an assessment bank. Built for a B.Tech student; simulation-first, no hardware needed.">
+<link rel="stylesheet" href="../../assets/css/style.css"><link rel="stylesheet" href="../assets/css/iot.css">
+<script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="stylesheet" href="../../assets/vendor/katex/katex.min.css"></head><body>
+<header class="site-head"><div class="wrap">
+<a class="brand" href="../index.html">IoT <span>&amp;</span> Robotics<span class="long"> crash course</span></a>
+<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
+</div></header>
+<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 6</strong><a href="#session-map">Session map</a><a href="#terms-the-term-tree">1. Terms: the term tree</a><a href="#remember">2. Remember</a><a href="#understand-the-derivation">3. Understand: the derivation</a><a href="#apply">4. Apply</a><a href="#analyze">5. Analyze</a><a href="#evaluate">6. Evaluate</a><a href="#create">7. Create</a><a href="#visualization-lesson">8. Visualization lesson</a><a href="#problem-set">9. Problem set</a><a href="#retrieval-practice-and-recap">10. Retrieval practice and recap</a><a href="#where-next">11. Where next</a></aside><article class="doc"><p><span class="chip">Unit 6</span> <span class="chip ">ready</span></p><h1>IoT Data, Cloud and Edge Computing: Payloads, Series, Alerts, Twins</h1><p class="lede">Payload formats, aggregation, anomaly detectors, a digital twin, edge versus cloud, and a dashboard.</p><div class="dl"><a class="btn primary" href="../downloads/u6/u6-notes.pdf" download>PDF notes<small>1.0 MB</small></a><a class="btn" href="../downloads/u6/u6-notes.docx" download>Word (.docx)<small>826 KB</small></a><a class="btn" href="../downloads/u6/u6-code.zip" download>All code (.zip)<small>55 KB</small></a></div><h2 id="session-map">Session map</h2>
+<div class="keyidea" title="Outcome of this session">
+<p>After this session you can:</p>
+<ol type="1">
+<li>choose a payload format (JSON, CBOR, packed binary) for a reading and compute what it costs on the wire, and decode a CBOR message by hand;</li>
+<li>aggregate a time series at the edge without hiding spikes (mean, minimum, maximum, count), and say what is lost when you keep only the mean;</li>
+<li>build and compare three streaming anomaly detectors (fixed limit, z-score, EWMA) and a CUSUM, and say which one catches a spike, a step and a drift, with the false-alarm price of each;</li>
+<li>use a digital twin (a model of the plant) to detect a fault that statistics on the measurement are slow to see, and explain the selection bias that a naive residual hides;</li>
+<li>size the edge-versus-cloud trade for the greenhouse in data volume and latency, and read the greenhouse dashboard’s API, alerts and stale-node logic.</li>
+</ol>
+</div>
+<ul>
+<li><strong>Prerequisites:</strong> Unit 1 (room model, thermostat), Unit 3 (EMA gain and delay: used here for the EWMA chart), Unit 5 (MQTT, wire bytes). Mean, standard deviation, Gaussian tails.</li>
+<li><strong>Difficulty ladder used:</strong> easy → medium → medium-hard → hard (Sections 3.1 to 3.4); the hardest tier is posed as open questions in Section 3.5.</li>
+<li><strong>Deliverables:</strong> this document (.tex, .pdf, .docx), 6 figures, the module <code>codes/cloud/telemetry_np/</code> (<code>telemetry_np.py</code>: JSON, packed binary and a CBOR codec, time series and downsampling, four detectors, edge arithmetic; <code>dashboard.py</code>: a Flask dashboard fed by MQTT; 10 tests), and <code>cbor_crosscheck_log.txt</code> (the CBOR codec against the independent library cbor2).</li>
+<li><strong>Source anchors:</strong> all formulas are derived in the text. <strong>The CBOR codec was verified against the independent library cbor2 6.1.5</strong> (2000 of 2000 random structures encode to byte-identical output and decode to equal values; the RFC 8949 Appendix A examples quoted in the tests were written from memory and each one agrees with cbor2; the RFC text itself was not fetched). The sensor noise, glitch, heater-fault size, cloud prices, the 540-byte reading of Unit 5 and the stage times of Unit 1 are <strong>assumed numbers</strong>. Every other number comes from the scripts in <code>figures/</code> or the module tests.</li>
+</ul>
+<h2 id="terms-the-term-tree">1. Terms: the term tree</h2>
+<table>
+<colgroup>
+<col style="width: 22%" />
+<col style="width: 14%" />
+<col style="width: 37%" />
+<col style="width: 13%" />
+<col style="width: 10%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Term</th>
+<th style="text-align: center;">Symbol</th>
+<th style="text-align: left;">One-line meaning</th>
+<th style="text-align: center;">Where it appears</th>
+<th style="text-align: center;">New / known</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">payload format</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">how the numbers of a reading are written as bytes</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">JSON</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">text format of named fields, easy to read, large</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">CBOR</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">binary format with the same data model as JSON, much smaller</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">packed binary</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">fixed byte layout agreed in advance, no field names</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">time series</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">values with timestamps, appended in time order</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">downsampling / aggregation</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">replacing many samples by a few statistics per time window</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">retention</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">how long data is kept at each resolution</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">anomaly</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a reading or pattern that departs from what is normal</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">point anomaly, level shift, drift</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a single outlier, a sudden lasting change, a slow lasting change</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">fixed limit (threshold alarm)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">alarm when a value leaves a fixed interval</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">z-score detector</td>
+<td style="text-align: center;"><span class="math inline">z</span></td>
+<td style="text-align: left;">alarm when a value is more than <span class="math inline">k</span> standard deviations from the recent mean</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">EWMA control chart</td>
+<td style="text-align: center;"><span class="math inline">\lambda</span>, <span class="math inline">L</span></td>
+<td style="text-align: left;">alarm when the exponentially smoothed value leaves control limits</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">CUSUM</td>
+<td style="text-align: center;"><span class="math inline">k</span>, <span class="math inline">h</span></td>
+<td style="text-align: left;">alarm when the accumulated deviation from a baseline exceeds a limit</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">false alarm and detection delay</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">an alarm with nothing wrong; samples from the start of a fault to its alarm</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">alert fatigue</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">operators ignoring alarms because too many are false</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">digital twin</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a model of a physical system run alongside it and compared with it</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">residual</td>
+<td style="text-align: center;"><span class="math inline">r</span></td>
+<td style="text-align: left;">measurement minus the model’s prediction</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">selection bias</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a bias created by looking only at cases chosen by a rule</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">edge aggregation</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">reducing data near the devices before it goes to the cloud</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">dashboard and REST API</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a page that shows current data, fed by JSON endpoints over HTTP</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">stale data</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a value not refreshed for longer than a few reporting periods</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+</tbody>
+</table>
+<p>Terms <em>used but not taught here</em>: TLS (Unit 7), machine-learning anomaly detection (named only), databases and query languages (named only), Kalman filtering (Unit 10).</p>
+<h2 id="remember">2. Remember</h2>
+<div class="definition" title="From reading to dashboard">
+<p>A reading leaves the node as a <strong>payload</strong>: bytes in a <strong>payload format</strong>. <strong>JSON</strong> writes named fields as text (<code>{"zone":1,"soil_raw":1832,...}</code>): readable, flexible, big. <strong>CBOR</strong> is a binary encoding with the same data model (numbers, strings, lists, maps) at roughly half the size. A <strong>packed binary</strong> layout fixes the order and size of every field in advance and sends no names at all: smallest, but sender and receiver must agree on the layout. At the other end the readings are stored as a <strong>time series</strong> (timestamped values), summarised (<strong>aggregation</strong>), checked for <strong>anomalies</strong>, and shown on a <strong>dashboard</strong>.</p>
+</div>
+<div class="definition" title="Anomalies come in three shapes">
+<p>A <strong>point anomaly</strong> is a single wild value (a glitch, a loose wire). A <strong>level shift</strong> is a sudden, lasting change (a sensor knocked loose, a valve stuck open). A <strong>drift</strong> is a slow, lasting change (a sensor ageing, a leak growing). A detector good at one shape is often poor at another; Section 3.3 measures it.</p>
+</div>
+<div class="definition" title="The digital twin idea">
+<p>A <strong>digital twin</strong> here means something modest and powerful: a <em>model of the plant</em> (the Unit 1 room equation) that is run alongside the real system, fed the same commands, and <strong>compared with the measurements</strong>. The difference, the <strong>residual</strong>, is small when the plant behaves as modelled and grows when it does not, which makes faults visible that the measurement alone hides.</p>
+</div>
+<p><strong>Memory hooks.</strong></p>
+<ul>
+<li><em>JSON is for humans, CBOR is for machines that want to be understood by humans, packed binary is for machines only.</em></li>
+<li><em>Keep the mean, the minimum and the maximum:</em> the mean tells the trend, the extremes tell the trouble.</li>
+<li><em>Fixed limit catches the cliff, EWMA catches the slope, z-score catches the surprise.</em></li>
+<li><em>Model-based beats model-free whenever the model is right:</em> it knows what the actuator should have done.</li>
+</ul>
+<p><strong>Before you read on: three predictions</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>The same five numbers are sent as long-key JSON (70 bytes) or packed binary (11 bytes). How much smaller is the whole exchange on the wire for a node that reconnects every wake-up (540 bytes of overhead in Unit 5): 85%, 50% or about 10%?</li>
+<li>A +3 <span class="math inline">^\circ</span>C one-minute glitch occurs inside a 10-minute window. By how much does the window’s <em>mean</em> move: 3.0, 1.5 or 0.3 <span class="math inline">^\circ</span>C?</li>
+<li>Six sensors report every minute and each alarm limit is <span class="math inline">\pm3</span> standard deviations. About how many false alarms per day should you expect: under 1, about 5 or over 20?</li>
+</ol>
+<p><strong>Recall quiz</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>Which payload format needs no field names, and what does it cost?</li>
+<li>Why should an edge aggregate keep the minimum and maximum, not only the mean?</li>
+<li>Which detector would you choose for a slow drift, and which for a single spike?</li>
+<li>What is a residual in a digital twin?</li>
+<li>When is a node’s value called stale?</li>
+</ol>
+<h2 id="understand-the-derivation">3. Understand: the derivation</h2>
+<h3 id="tier-1-easy-intuition-and-a-picture">3.1 Tier 1 (easy): intuition and a picture</h3>
+<p>Everything so far produced a number every minute. This Unit asks what happens to it. It is packed into bytes (Figure 1), carried by MQTT (Unit 5), stored, summarised, checked for trouble and displayed (Figure 6). Three choices decide how good the system is: <em>how the number is written</em>, <em>where it is reduced</em> (device, edge, cloud) and <em>what counts as trouble</em>. We take them in turn, always with a measurement.</p>
+<p><strong>How the number is written.</strong> One reading of the soil node has five numbers: zone, soil value, temperature, battery voltage and a timestamp. Written as long-key JSON it is 70 bytes; with short keys, 50; as CBOR with short keys, 39; as CBOR with integer keys and scaled integers, 20; as packed binary, 11 bytes (Figure 1, left). The <em>information</em> is identical. Whether the difference matters depends on the whole exchange (Figure 1, right): a node that reconnects at every wake-up pays 606 bytes on the wire with the long JSON and 547 with the packed binary, a saving of 59 bytes, <strong>9.7%</strong> (prediction 1 of Section 2: about 10%); a node that keeps its connection pays 181 and 122 bytes, a saving of <strong>32.6%</strong>. The payload format matters most where the connection overhead is small.</p>
+<figure>
+<img src="../assets/fig/u6/fig01_payload.png" style="width:95.0%" alt="Left: the payload size of one five-number reading in five formats: long-key JSON 70 bytes, short-key JSON 50, CBOR with short keys 39, CBOR with integer keys 20, packed binary 11. Right: bytes on the wire per reading for a node that reconnects at every wake-up (MQTT QoS 1, simplified model of Unit 5): 606, 586, 575, 556 and 547 bytes; the overhead of the connection dominates, so the best format saves only 9.7%." />
+<figcaption aria-hidden="true">Left: the payload size of one five-number reading in five formats: long-key JSON 70 bytes, short-key JSON 50, CBOR with short keys 39, CBOR with integer keys 20, packed binary 11. Right: bytes on the wire per reading for a node that reconnects at every wake-up (MQTT QoS 1, simplified model of Unit 5): 606, 586, 575, 556 and 547 bytes; the overhead of the connection dominates, so the best format saves only 9.7%.</figcaption>
+</figure>
+<h3 id="tier-2-medium-the-definitions-made-precise">3.2 Tier 2 (medium): the definitions made precise</h3>
+<h4 id="the-three-formats">3.2.1 The three formats</h4>
+<p><strong>JSON</strong> is text: <code>{"zone":1,"soil_raw":1832,"temp_c":21.5,"batt_v":3.71,"ts":1760000000}</code>. Every field name travels with every message, and numbers are written in decimal digits.</p>
+<p><strong>Packed binary</strong> fixes a layout. Ours (<code>pack_reading</code>) is: zone as 1 byte, soil raw value as 2 bytes (0 to 65,535), temperature as a signed 16-bit integer in units of 0.01 <span class="math inline">^\circ</span>C, battery in millivolts as 2 bytes, and optionally a 4-byte timestamp: 7 bytes, or 11 with the timestamp. <strong>Scaling to integers loses precision by design:</strong> rounding to a step of <span class="math inline">q</span> gives an error of at most <span class="math inline">q/2</span> (Unit 2), here 0.005 <span class="math inline">^\circ</span>C and 0.5 mV, which is below the sensor’s own accuracy (Unit 3). The test checks the round trip to <span class="math inline">\pm0.005</span> <span class="math inline">^\circ</span>C. A signed 16-bit integer in 0.01 <span class="math inline">^\circ</span>C covers <span class="math inline">\pm327.67</span> <span class="math inline">^\circ</span>C.</p>
+<p><strong>CBOR</strong> (Concise Binary Object Representation) has JSON’s data model but is binary and self-describing, so a receiver needs no agreed layout. Section 3.3.1 shows the encoding. It sits between the other two in size and keeps the flexibility of JSON.</p>
+<h4 id="three-detectors-and-a-chart">3.2.2 Three detectors and a chart</h4>
+<p>Let <span class="math inline">x_t</span> be a reading with, in normal operation, mean <span class="math inline">\mu_0</span> and standard deviation <span class="math inline">\sigma</span> (assumed Gaussian and independent for the formulas below). The four tools:</p>
+<ul>
+<li><strong>Fixed limit:</strong> alarm if <span class="math inline">x_t</span> is outside <span class="math inline">[\mu_0-3\sigma,\mu_0+3\sigma]</span> (or any limits set by the application, such as 5 and 40 <span class="math inline">^\circ</span>C for a greenhouse). It needs the baseline, remembers nothing, and ignores trends inside the limits.</li>
+<li><strong>z-score:</strong> alarm if <span class="math inline">|x_t-\bar x|&gt;k\,s</span>, where <span class="math inline">\bar x</span> and <span class="math inline">s</span> are the mean and standard deviation of the previous <span class="math inline">W</span> samples (the current sample is excluded from its own statistics). It <em>learns</em> the baseline, and therefore also learns a change: after a level shift the window fills with the new level and the alarm stops.</li>
+<li><strong>EWMA control chart:</strong> smooth the readings with the exponential filter of Unit 3, <span class="math inline">z_t=\lambda x_t+(1-\lambda)z_{t-1}</span> with <span class="math inline">z_0=\mu_0</span>, and alarm if <span class="math inline">|z_t-\mu_0|</span> exceeds the control limit of Section 3.3.3. It needs the baseline and is good at small, lasting changes.</li>
+<li><strong>CUSUM</strong> (cumulative sum): <span class="math inline">S^+_t=\max(0,S^+_{t-1}+(x_t-\mu_0)-k)</span> and <span class="math inline">S^-_t=\max(0,S^-_{t-1}-(x_t-\mu_0)-k)</span>; alarm if either exceeds a decision limit <span class="math inline">h</span>. It accumulates small consistent deviations and forgets deviations in the other direction.</li>
+</ul>
+<p>Every detector has two costs: <strong>false alarms</strong> (an alarm when nothing is wrong) and <strong>detection delay</strong> (samples from the start of a fault to its alarm). They trade against each other through the limits.</p>
+<h3 id="tier-3-medium-hard-the-main-derivations">3.3 Tier 3 (medium-hard): the main derivations</h3>
+<h4 id="cbor-by-hand">3.3.1 CBOR by hand</h4>
+<p>A CBOR item starts with a byte whose top three bits are the <strong>major type</strong> and whose low five bits are an <em>argument</em>: 0 unsigned integer, 1 negative integer, 2 byte string, 3 text string, 4 array, 5 map, 7 simple values and floats. An argument below 24 is the value (or length) itself; 24, 25, 26, 27 mean that it follows in the next 1, 2, 4 or 8 bytes, big-endian. A negative integer <span class="math inline">n</span> is encoded as the unsigned value <span class="math inline">-1-n</span> with major type 1; a 64-bit float is <code>fb</code> followed by 8 bytes. A map is its pair count (major type 5) followed by key, value, key, value. Our codec follows exactly these rules (<code>cbor_encode</code>, 60 lines).</p>
+<p>Take the 20-byte integer-key message of Figure 1, <code>a5 01 01 02 19 07 28 03 18 d7 04 19 0e 7e 05 1a 68 e7 78 00</code>, and read it:</p>
+<table>
+<caption>reading the 20-byte CBOR message byte by byte. The module’s tests check the codec against 25 standard encodings (for example 24 is <code>18 18</code>, 1000 is <code>19 03 e8</code>, <span class="math inline">-100</span> is <code>38 63</code>, <code>{"a":1,"b":[2,3]}</code> is <code>a2 61 61 01 61 62 82 02 03</code>), and <code>cbor_crosscheck.py</code> compared it with the independent library cbor2 (version 6.1.5): 2000 of 2000 random nested structures gave byte-identical output and decoded equally in both directions.</caption>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">bytes</th>
+<th style="text-align: left;">meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>a5</code></td>
+<td style="text-align: left;">major type 5 (map), 5 pairs</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>01</code> <code>01</code></td>
+<td style="text-align: left;">key 1 (zone), value 1</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>02</code> <code>19 07 28</code></td>
+<td style="text-align: left;">key 2 (soil), <code>19</code> = unsigned with a 2-byte argument, <span class="math inline">\mathtt{0x0728}=1832</span></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>03</code> <code>18 d7</code></td>
+<td style="text-align: left;">key 3 (temperature in 0.1 <span class="math inline">^\circ</span>C), <code>18</code> = 1-byte argument, <span class="math inline">\mathtt{0xd7}=215</span> (21.5 <span class="math inline">^\circ</span>C)</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>04</code> <code>19 0e 7e</code></td>
+<td style="text-align: left;">key 4 (battery in mV), <span class="math inline">\mathtt{0x0e7e}=3710</span></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>05</code> <code>1a 68 e7 78 00</code></td>
+<td style="text-align: left;">key 5 (time), <code>1a</code> = 4-byte argument, <span class="math inline">\mathtt{0x68e77800}=1{,}760{,}000{,}000</span></td>
+</tr>
+</tbody>
+</table>
+<h4 id="aggregation-what-the-mean-hides">3.3.2 Aggregation: what the mean hides</h4>
+<p>Replace <span class="math inline">n</span> samples in a window by their <strong>mean</strong>, <strong>minimum</strong>, <strong>maximum</strong> and <strong>count</strong>. For a single spike of size <span class="math inline">A</span> among otherwise steady values the window mean moves by only <span class="math inline">A/n</span>, because the spike is one sample in <span class="math inline">n</span>: a 3 <span class="math inline">^\circ</span>C glitch in a 10-minute window moves the mean by <span class="math inline">3/10=0.3</span> <span class="math inline">^\circ</span>C, which vanishes into the normal ripple (prediction 2 of Section 2). The maximum moves by nearly the full amount. In the simulation of Figure 2 (the thermostat of Unit 1 with 0.2 <span class="math inline">^\circ</span>C sensor noise, 6 hours at one sample per minute, one glitch of <span class="math inline">+3</span> <span class="math inline">^\circ</span>C at minute 205) the window containing the glitch has mean 21.285 against a neighbours’ average of 20.98: a rise of <strong>0.30 <span class="math inline">^\circ</span>C</strong>; its maximum is 23.996 against neighbours’ 21.7 to 21.9: a rise of <strong>2.33 <span class="math inline">^\circ</span>C</strong>. Reducing 360 points to 36 (a factor of 10) with all four statistics keeps the glitch visible; with the mean alone it is gone.</p>
+<figure>
+<img src="../assets/fig/u6/fig02_downsample.png" style="width:85.0%" alt="Thermostat temperature sampled every minute for 6 hours with one +3 ^\circC glitch at minute 205 (grey), reduced to 36 ten-minute windows: the mean (blue line) shows the glitch as a 0.3 ^\circC bump that is lost in the ripple, while the minimum-to-maximum band (light blue) shows it clearly at 24.0 ^\circC." />
+<figcaption aria-hidden="true">Thermostat temperature sampled every minute for 6 hours with one +3 <span class="math inline">^\circ</span>C glitch at minute 205 (grey), reduced to 36 ten-minute windows: the mean (blue line) shows the glitch as a 0.3 <span class="math inline">^\circ</span>C bump that is lost in the ripple, while the minimum-to-maximum band (light blue) shows it clearly at 24.0 <span class="math inline">^\circ</span>C.</figcaption>
+</figure>
+<h4 id="ewma-the-control-limit-and-what-it-catches">3.3.3 EWMA: the control limit, and what it catches</h4>
+<p>With independent readings of variance <span class="math inline">\sigma^2</span>, the variance of the EWMA after <span class="math inline">t</span> steps starting from <span class="math inline">z_0=\mu_0</span> is <span class="math inline">\sigma^2\frac{\lambda}{2-\lambda}\big(1-(1-\lambda)^{2t}\big)</span>: the same sum of squared impulse-response terms as the noise gain of Unit 3 (equation for <span class="math inline">\sqrt{\alpha/(2-\alpha)}</span>), here cut short at <span class="math inline">t</span> terms. The <strong>control limit</strong> is <span class="math inline">L</span> times its square root: <span class="math display"> \text{limit}_t=L\,\sigma\sqrt{\frac{\lambda}{2-\lambda}\Big(1-(1-\lambda)^{2t}\Big)}\ \xrightarrow{t\to\infty}\ L\,\sigma\sqrt{\frac{\lambda}{2-\lambda}}. \tag{1}</span> For <span class="math inline">\lambda=0.1</span> and <span class="math inline">L=3</span> the steady limit is <span class="math inline">3\sqrt{0.1/1.9}=0.688\,\sigma</span>: a much narrower band than the <span class="math inline">\pm3\sigma</span> of a fixed limit, because the average of many readings is much steadier than one reading. Three consequences, each tested in the simulation (300 runs per case, anomaly from sample 300):</p>
+<ul>
+<li><em>Step of size <span class="math inline">\Delta</span>.</em> The EWMA moves as <span class="math inline">z_t=\Delta(1-(1-\lambda)^t)</span>, which crosses the limit when <span class="math inline">1-(1-\lambda)^t=\text{limit}/\Delta</span>. For <span class="math inline">\Delta=1.5\sigma</span> this takes <span class="math inline">\ln(1-0.688/1.5)/\ln0.9=5.8</span> samples. Measured mean delay: <strong>5.4</strong>. A fixed <span class="math inline">\pm3\sigma</span> limit alarms only when one noisy sample jumps over 3: with probability <span class="math inline">P(N&gt;1.5)=0.067</span> per sample, a mean delay of about 14 samples; measured <strong>13.5</strong>.</li>
+<li><em>Spike of size <span class="math inline">A</span>.</em> The EWMA reaches only <span class="math inline">\lambda A</span> at its peak, then decays. For <span class="math inline">A=7\sigma</span> this is <span class="math inline">0.7\sigma</span>, barely above the limit <span class="math inline">0.688\sigma</span>: a spike is detected only if the noise helps, which the simulation confirms: <strong>68.3%</strong> of runs, with a mean delay of 19.7 samples (the alarm needs the noise at the right moment). A fixed limit and the z-score both alarm on the spike itself: 100% at delay 0.</li>
+<li><em>Drift of slope <span class="math inline">r</span> per sample.</em> The EWMA of a ramp lags it by the mean delay of Unit 3, <span class="math inline">(1-\lambda)/\lambda</span> samples, i.e. by <span class="math inline">r(1-\lambda)/\lambda</span>: for <span class="math inline">r=0.02\sigma</span>, <span class="math inline">0.18\sigma</span> at steady state. The chart alarms when the ramp minus this lag exceeds the limit: <span class="math inline">(0.688+0.18)/0.02\approx43</span> samples (measured <strong>36</strong>, noise helping); the fixed limit needs the drifted signal itself to reach <span class="math inline">3\sigma</span> (about 59 samples measured), and the z-score is <em>worst</em> (mean delay <strong>103</strong>, only 91% detected) because its window moves with the drift and so absorbs it.</li>
+</ul>
+<table>
+<caption>three detectors on a unit-variance signal; “detected” counts runs that alarmed within the 300 samples after the anomaly began; the delay is averaged over the detected runs. The fixed limit and the EWMA know the baseline mean and variance; the z-score learns them (60-sample window). All three have a false-alarm rate near 3 per 1000 samples (the Gaussian value for <span class="math inline">\pm3\sigma</span> is 2.7).</caption>
+<colgroup>
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 22%" />
+<col style="width: 22%" />
+<col style="width: 22%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">anomaly</th>
+<th style="text-align: left;">detector</th>
+<th style="text-align: right;">detected (300 runs)</th>
+<th style="text-align: right;">mean delay (samples)</th>
+<th style="text-align: right;">false alarms per 1000 samples</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">spike +7</td>
+<td style="text-align: left;">fixed limit <span class="math inline">\pm3</span></td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">2.88</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: left;">z-score (60, 3)</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">3.74</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: left;">EWMA (0.1, 3)</td>
+<td style="text-align: right;">68.3%</td>
+<td style="text-align: right;">19.7</td>
+<td style="text-align: right;">3.19</td>
+</tr>
+<tr>
+<td style="text-align: left;">step +1.5</td>
+<td style="text-align: left;">fixed limit <span class="math inline">\pm3</span></td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">13.5</td>
+<td style="text-align: right;">2.88</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: left;">z-score (60, 3)</td>
+<td style="text-align: right;">85.3%</td>
+<td style="text-align: right;">69.8</td>
+<td style="text-align: right;">3.74</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: left;">EWMA (0.1, 3)</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">5.4</td>
+<td style="text-align: right;">3.19</td>
+</tr>
+<tr>
+<td style="text-align: left;">drift 0.02 per sample</td>
+<td style="text-align: left;">fixed limit <span class="math inline">\pm3</span></td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">58.9</td>
+<td style="text-align: right;">2.88</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: left;">z-score (60, 3)</td>
+<td style="text-align: right;">91.0%</td>
+<td style="text-align: right;">103.0</td>
+<td style="text-align: right;">3.74</td>
+</tr>
+<tr>
+<td style="text-align: left;"></td>
+<td style="text-align: left;">EWMA (0.1, 3)</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">36.1</td>
+<td style="text-align: right;">3.19</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="../assets/fig/u6/fig03_detectors.png" style="width:95.0%" alt="Left: a unit-variance signal with a +1.5 step at sample 300 and the alarms (rows below the trace) of the three detectors: the EWMA alarms within about 5 samples and stays on; the fixed limit alarms intermittently; the z-score hardly alarms (its window absorbs the step). Right: mean detection delay in samples by anomaly type; a cross marks a detector that missed more than 5% of runs, with its detection rate (EWMA on the spike 68%; z-score on step 85% and drift 91%)." />
+<figcaption aria-hidden="true">Left: a unit-variance signal with a +1.5 step at sample 300 and the alarms (rows below the trace) of the three detectors: the EWMA alarms within about 5 samples and stays on; the fixed limit alarms intermittently; the z-score hardly alarms (its window absorbs the step). Right: mean detection delay in samples by anomaly type; a cross marks a detector that missed more than 5% of runs, with its detection rate (EWMA on the spike 68%; z-score on step 85% and drift 91%).</figcaption>
+</figure>
+<p><strong>No detector wins everywhere.</strong> The fixed limit and the z-score are the right tools for spikes, the EWMA for steps and drifts, and <strong>CUSUM</strong> (below) for small shifts that must be found reliably.</p>
+<h4 id="the-digital-twin-a-residual-that-knows-what-the-heater-should-do">3.3.4 The digital twin: a residual that knows what the heater should do</h4>
+<p>Statistics on the temperature alone are slow to see an actuator fault, because a controller compensates for it. Take the thermostat of Unit 1 and suppose that from minute 180 the heater delivers only 70% of its power. The thermostat still holds 21 <span class="math inline">^\circ</span>C (the steady duty of Unit 1, equation for <span class="math inline">D</span>, rises from <span class="math inline">16/30=0.53</span> to <span class="math inline">16/21=0.76</span>, which is below 1), so the temperature stays in its usual band (Figure 4, top). A twin predicts the next measured temperature from the <em>current measurement and the commanded heater state</em> using the exact solution of Unit 1: <span class="math display"> \hat y_{k+1}=T_\infty+(y_k-T_\infty)\,e^{-\Delta t/\tau},\qquad T_\infty=T_{\text{out}}+k\tau u_k,\qquad r_{k+1}=y_{k+1}-\hat y_{k+1}. \tag{2}</span> In normal operation <span class="math inline">r</span> is only sensor noise: <span class="math inline">r_{k+1}=n_{k+1}-e^{-\Delta t/\tau}n_k</span> has standard deviation <span class="math inline">\sigma\sqrt{1+e^{-2\Delta t/\tau}}=0.2\times1.403=0.28</span> <span class="math inline">^\circ</span>C (measured 0.292 on the heater-on minutes). With a heater of power fraction <span class="math inline">p</span> the true temperature moves as if <span class="math inline">k</span> were <span class="math inline">pk</span>, so the residual during an <em>on</em> minute shifts by <span class="math display"> \Delta r=(p-1)\,k\,\tau\,(1-e^{-\Delta t/\tau})=(0.7-1)\times0.5\times60\times0.01653=-0.149\ ^\circ\text{C per on-minute}, \tag{3}</span> and by <span class="math inline">-0.248</span> for a 50% heater. The fault shows only when the heater is on (when it is off, nothing is wrong to see), so the residual is examined on on-minutes only. A shift of <span class="math inline">-0.149</span> against noise of 0.28 is about half a standard deviation: invisible in one sample, clear once <strong>accumulated</strong>, which is what the CUSUM does.</p>
+<p><em>Selection bias.</em> In a fault-free run the mean residual on on-minutes is not zero but <span class="math inline">+0.0565</span>. The reason is that the controller switches the heater on <em>because</em> the measured temperature happened to be low, i.e. because the noise <span class="math inline">n_k</span> was negative; the next residual <span class="math inline">r_{k+1}=n_{k+1}-e^{-\Delta t/\tau}n_k</span> then tends to be positive. We isolated its effect (script <code>selection_bias_check.py</code>) with the same allowance <span class="math inline">k=0.075</span> and decision limit <span class="math inline">h=2.3</span>: a CUSUM that assumes baseline 0 detects the fault in 100 of 100 runs but with a mean delay of <strong>54.6 minutes</strong> and false alarms in 2 of 100 fault-free runs; with the baseline set to the <em>measured</em> fault-free mean (<span class="math inline">\mu_0=0.0565</span>) the delay is <strong>25.7 minutes</strong> and none of 100 fault-free 480-minute runs alarms. The bias thus roughly <em>doubles</em> the delay, because it cancels part of the fault’s shift. (An earlier attempt with <span class="math inline">k=0.07</span>, <span class="math inline">h=1.0</span> and baseline 0 raised false alarms in 74 of 100 runs; that was mostly the low limit <span class="math inline">h</span>, which sets the false-alarm rate, and is a reminder not to read one number off a change of several parameters.) <strong>The lesson: a residual computed only on cases chosen by the controller’s own decision inherits a bias from that decision; calibrate the baseline from fault-free data under the same selection.</strong></p>
+<p><em>Result</em> (100 runs with a fault at minute 180; Figure 4): the twin’s CUSUM detected the fault in <strong>100 of 100</strong> runs with a mean delay of <strong>25.4 minutes</strong> and no alarm before the fault in any run. An EWMA on the temperature itself (baseline 21 <span class="math inline">^\circ</span>C, <span class="math inline">\sigma=0.447</span> measured, <span class="math inline">\lambda=0.1</span>, <span class="math inline">L=3</span>) detected it in 85 of 100 runs, with a mean delay of <strong>104.4 minutes</strong>, and raised an alarm before the fault in 7 of 100 runs. So the temperature statistics are not blind (the heater has to run longer, which lowers the mean slightly) but they are four times slower and less reliable than a model that knows what the heater should have done. In the example run of the figure the twin alarmed at minute 203, 23 minutes after the fault, while the temperature chart gave no alarm at all.</p>
+<figure>
+<img src="../assets/fig/u6/fig04_twin.png" style="width:85.0%" alt="Heater fault from minute 180 (70% power), thermostat holding 21 ^\circC. Top: the measured temperature stays in its usual band; the EWMA on the temperature raises no alarm in this run. Middle: the twin residual on heater-on minutes (grey dots) shifts to about -0.15 ^\circC per on-minute (dotted line), small against the noise of 0.28. Bottom: the CUSUM on the residual alarms at minute 203 and stays on." />
+<figcaption aria-hidden="true">Heater fault from minute 180 (70% power), thermostat holding 21 <span class="math inline">^\circ</span>C. Top: the measured temperature stays in its usual band; the EWMA on the temperature raises no alarm in this run. Middle: the twin residual on heater-on minutes (grey dots) shifts to about <span class="math inline">-0.15</span> <span class="math inline">^\circ</span>C per on-minute (dotted line), small against the noise of 0.28. Bottom: the CUSUM on the residual alarms at minute 203 and stays on.</figcaption>
+</figure>
+<h3 id="tier-4-hard-edge-versus-cloud-alert-fatigue-and-the-dashboard">3.4 Tier 4 (hard): edge versus cloud, alert fatigue, and the dashboard</h3>
+<h4 id="what-to-do-where">3.4.1 What to do where</h4>
+<p>Unit 1 gave the rule of thumb: fast, safety-critical loops live low; slow, data-heavy jobs live high. Aggregation at the edge turns that into numbers. Take 100 soil nodes reporting every minute, 540 bytes on the wire each (Unit 5, fresh MQTT QoS 1 connection): sending every reading to the cloud is <span class="math inline">100\times1440\times540=77.8</span> MB per day, 2.33 GB per month and 4.32 million messages per month. A gateway at the edge receives the readings over the local network (free), reduces each node’s window to four numbers (mean, minimum, maximum, count, 8 bytes each: an upper estimate) and sends one batch per window over its single open connection: 3284 bytes per batch (100 nodes <span class="math inline">\times</span> 32 bytes + 84 bytes of framing).</p>
+<table>
+<caption>data to the cloud for 100 nodes at one reading per minute, against the edge aggregation window (assumed prices of 0.09 per GB and 1.00 per million messages, in illustrative currency units; the cost column is arithmetic on assumed prices, not a quotation).</caption>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: right;">window at the edge</th>
+<th style="text-align: right;">cloud data per day</th>
+<th style="text-align: right;">reduction</th>
+<th style="text-align: right;">messages per month</th>
+<th style="text-align: right;">assumed cost per month</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">none (every reading)</td>
+<td style="text-align: right;">77.76 MB</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">4,320,000</td>
+<td style="text-align: right;">4.53</td>
+</tr>
+<tr>
+<td style="text-align: right;">1 min</td>
+<td style="text-align: right;">4.73 MB</td>
+<td style="text-align: right;">16x</td>
+<td style="text-align: right;">43,200</td>
+<td style="text-align: right;">0.056</td>
+</tr>
+<tr>
+<td style="text-align: right;">5 min</td>
+<td style="text-align: right;">0.946 MB</td>
+<td style="text-align: right;">82x</td>
+<td style="text-align: right;">8,640</td>
+<td style="text-align: right;">0.011</td>
+</tr>
+<tr>
+<td style="text-align: right;">10 min</td>
+<td style="text-align: right;">0.473 MB</td>
+<td style="text-align: right;">164x</td>
+<td style="text-align: right;">4,320</td>
+<td style="text-align: right;">0.0056</td>
+</tr>
+<tr>
+<td style="text-align: right;">30 min</td>
+<td style="text-align: right;">0.158 MB</td>
+<td style="text-align: right;">493x</td>
+<td style="text-align: right;">1,440</td>
+<td style="text-align: right;">0.0019</td>
+</tr>
+<tr>
+<td style="text-align: right;">60 min</td>
+<td style="text-align: right;">0.079 MB</td>
+<td style="text-align: right;">987x</td>
+<td style="text-align: right;">720</td>
+<td style="text-align: right;">0.0009</td>
+</tr>
+</tbody>
+</table>
+<p>Two honest remarks. First, at these prices even the raw stream costs a few units per month: <strong>cost is not the main reason to aggregate.</strong> The reasons are the cost of a <em>cellular</em> uplink where a megabyte is expensive, the load on cloud processing, the privacy of raw data, and robustness: an edge that aggregates and alerts locally keeps working when the internet is down. Second, aggregation destroys information that cannot be recovered (Section 3.3.2): decide <em>before</em> aggregating which statistics a future question may need. The latency side is Unit 1’s: an alert or a command through the cloud takes 150 ms against 15 ms at the edge (assumed stage times; Figure 5, right), irrelevant for a soil-moisture alert that tolerates minutes, decisive for the rover’s collision stop.</p>
+<figure>
+<img src="../assets/fig/u6/fig05_edge.png" style="width:95.0%" alt="Left: data sent to the cloud per day for 100 nodes against the edge aggregation window (log axis): every reading 77.8 MB (dashed), 10-minute windows 0.47 MB (164 times less), 60-minute windows 0.079 MB. Right: assumed latency of an alert or command: 15 ms at the edge, 150 ms through the cloud." />
+<figcaption aria-hidden="true">Left: data sent to the cloud per day for 100 nodes against the edge aggregation window (log axis): every reading 77.8 MB (dashed), 10-minute windows 0.47 MB (164 times less), 60-minute windows 0.079 MB. Right: assumed latency of an alert or command: 15 ms at the edge, 150 ms through the cloud.</figcaption>
+</figure>
+<h4 id="alert-fatigue-the-arithmetic-of-false-alarms">3.4.2 Alert fatigue: the arithmetic of false alarms</h4>
+<p>A false-alarm probability that sounds small is large when multiplied by the number of tests. A <span class="math inline">\pm3\sigma</span> limit on Gaussian noise has a false-alarm probability of <span class="math inline">P(|Z|&gt;3)=\mathrm{erfc}(3/\sqrt2)=0.0027</span> per sample. Six sensors reporting once a minute make <span class="math inline">6\times1440=8640</span> tests a day, so <strong>23 false alarms per day</strong>: prediction 3 of Section 2 (over 20). With 10 sensors it is 39 per day. An operator who receives 23 false alarms a day stops reading them, and the one real alarm is lost: <strong>alert fatigue</strong>. Raising the limit to <span class="math inline">\pm3.5\sigma</span> gives 4.0 false alarms per day, <span class="math inline">\pm4\sigma</span> gives 0.55, <span class="math inline">\pm4.5\sigma</span> 0.06; the limit for under one false alarm per day with six sensors is <span class="math inline">\pm3.85\sigma</span> (probability <span class="math inline">1.2\times10^{-4}</span>). The price is detection delay and missed small faults, the trade of Section 3.3.3. Practical remedies: require two consecutive alarms, alarm on the EWMA or CUSUM instead of on single samples, use different limits for “warning” and “alarm”, and <em>page</em> a person only for alarms that need action.</p>
+<h4 id="the-greenhouse-dashboard">3.4.3 The greenhouse dashboard</h4>
+<p>The module <code>dashboard.py</code> is a small Flask web application over the Unit 5 broker. A coroutine (<code>mqtt_ingest</code>) subscribes to <code>greenhouse/+/soil</code> and <code>greenhouse/+/temp</code> with our client, parses each payload (a plain number, or JSON with a field <code>v</code>) and calls <code>Store.ingest</code>, which appends to the topic’s time series and runs two detectors: a fixed limit per quantity (assumed limits: soil 5 to 60 percent, temperature 5 to 40 <span class="math inline">^\circ</span>C, battery 3.0 to 4.2 V) and a z-score detector (60 samples, <span class="math inline">k=4</span> to hold false alarms down, Section 3.4.2). The HTTP interface is plain JSON: <code>GET /api/latest</code> (the last value, its age and a <code>stale</code> flag per topic), <code>GET /api/series?topic=...&amp;since=...</code>, <code>GET /api/alerts</code>, <code>POST /api/ingest</code> (for tests and for devices that cannot speak MQTT), and <code>GET /</code> (one self-contained HTML page that polls the API every 5 s; no external libraries). A topic is <strong>stale</strong> when its last value is older than three reporting periods (180 s here): this is how the dashboard marks a silent node, since a sleeping node cannot have a last will (Unit 5).</p>
+<p>Figure 6 is drawn from the real API of a running store: three zones, six hours at one reading per minute, one injected temperature glitch (44 <span class="math inline">^\circ</span>C in zone 2 at hour 3) and zone 3 silent for its last ten minutes. The store raised five alerts: a <em>limit</em> and an <em>outlier</em> alert for the glitch (it exceeds 40 <span class="math inline">^\circ</span>C and is more than <span class="math inline">4\sigma</span> from the recent mean), and three <em>outlier</em> alerts for the soil moisture of the three zones at hour 4, where the simulated watering raised the moisture by 6 percentage points. <strong>Those three are false alarms by design: the watering is expected, but the detector does not know it.</strong> A system that logs its own actions (a command log, or a twin that includes the valve, Section 3.3.4) can subtract them. Zone 3 is shown <em>stale</em> with the text “silent 10 min”.</p>
+<figure>
+<img src="../assets/fig/u6/fig06_dashboard.png" style="width:90.0%" alt="The dashboard drawn from its own API after six simulated hours. Top: the latest values of zones 1 to 3; zone 3 is marked stale (silent 10 minutes), zones 1 and 2 fresh (60 s old). Bottom: the temperature series from /api/series with the alerts from /api/alerts: the zone 2 glitch raises a limit alert and an outlier alert. Three soil-moisture outlier alerts at hour 4 (the simulated watering) are not shown on this temperature axis." />
+<figcaption aria-hidden="true">The dashboard drawn from its own API after six simulated hours. Top: the latest values of zones 1 to 3; zone 3 is marked stale (silent 10 minutes), zones 1 and 2 fresh (60 s old). Bottom: the temperature series from /api/series with the alerts from /api/alerts: the zone 2 glitch raises a limit alert and an outlier alert. Three soil-moisture outlier alerts at hour 4 (the simulated watering) are not shown on this temperature axis.</figcaption>
+</figure>
+<p><em>Retention.</em> A real store keeps raw data for days, aggregated data (the four statistics per 10 minutes or per hour) for months and daily summaries for years, because each step reduces the volume by a factor of 10 to 100 (Table above): choose the windows from the questions you will ask.</p>
+<h3 id="tier-5-hardest-open-questions">3.5 Tier 5 (hardest): open questions</h3>
+<ol type="1">
+<li><strong>Can the twin be wrong in a harmful way?</strong> If the model is off (a wrong <span class="math inline">\tau</span> or an unknown door), the residual drifts and the CUSUM alarms falsely or hides a real fault. How would you estimate the model’s parameters from fault-free data, and how often must they be re-estimated?</li>
+<li><strong>Seasonality.</strong> A diurnal cycle makes a fixed baseline wrong at night and a long window wrong at dawn. Design a baseline that learns the daily shape (a twin of the <em>environment</em>), and say what it needs in data.</li>
+<li><strong>Privacy of aggregates.</strong> A 10-minute mean of a room’s temperature or power can still reveal whether someone is at home. How coarse must aggregation be to protect privacy, and who decides (Unit 7)?</li>
+</ol>
+<h2 id="apply">4. Apply</h2>
+<h3 id="worked-problems">4.1 Worked problems</h3>
+<p><strong>Problem 1 (z-score).</strong> The last 60 temperatures have mean 21.0 and standard deviation 0.3. A reading of 22.2 arrives. Does a <span class="math inline">k=3</span> detector alarm? A <span class="math inline">k=4.5</span> detector?</p>
+<p><em>Solution.</em> <span class="math inline">z=(22.2-21.0)/0.3=4.0</span>: yes for <span class="math inline">k=3</span>; no for <span class="math inline">k=4.5</span> (and not strictly for <span class="math inline">k=4</span>).</p>
+<p><strong>Problem 2 (EWMA limit).</strong> For <span class="math inline">\lambda=0.2</span>, <span class="math inline">\sigma=0.5</span>, <span class="math inline">L=3</span>: the steady limit, and the limit at <span class="math inline">t=1</span>.</p>
+<p><em>Solution.</em> Steady: <span class="math inline">3\times0.5\times\sqrt{0.2/1.8}=0.5</span>. At <span class="math inline">t=1</span>: <span class="math inline">1.5\sqrt{0.1111\times(1-0.64)}=1.5\times0.2=0.30</span>. The limit starts narrow and widens to 0.5 as the smoothed value accumulates variance.</p>
+<p><strong>Problem 3 (false alarms).</strong> Ten sensors report once a minute with <span class="math inline">\pm3\sigma</span> limits. False alarms per day?</p>
+<p><em>Solution.</em> <span class="math inline">10\times1440\times0.0027=38.9</span> per day. For under one a day a limit of about <span class="math inline">\pm4\sigma</span> suffices (0.91 per day).</p>
+<p><strong>Problem 4 (payload volume).</strong> 200 nodes on persistent MQTT connections, one QoS 1 reading per minute: data per day for 70-byte JSON against 11-byte binary payloads.</p>
+<p><em>Solution.</em> Wire bytes per reading 181 and 122: <span class="math inline">200\times1440\times181=52.1</span> MB and <span class="math inline">200\times1440\times122=35.1</span> MB per day, a saving of 33%.</p>
+<p><strong>Problem 5 (twin shift).</strong> The heater drops to 50% power. What residual shift per on-minute should the twin see, and can the thermostat still hold 21 <span class="math inline">^\circ</span>C?</p>
+<p><em>Solution.</em> <span class="math inline">\Delta r=(0.5-1)\times0.5\times60\times0.01653=-0.248</span> <span class="math inline">^\circ</span>C per on-minute. The needed duty is <span class="math inline">16/(0.25\times60)=1.07&gt;1</span>: <strong>no</strong>, the room cannot hold 21 <span class="math inline">^\circ</span>C (Unit 1, feasibility); the fault would be visible as a falling temperature, and a plain limit alarm would catch it, late.</p>
+<h3 id="code-and-figures">4.2 Code and figures</h3>
+<pre class="python"><code>import telemetry_np as T
+
+r = dict(zone=1, soil_raw=1832, temp_c=21.5, batt_v=3.71)
+print(len(T.encode_json(r)), len(T.cbor_encode(r)), len(T.pack_reading(1, 1832, 21.5, 3.71)))   # 70-ish JSON, CBOR, 7 packed
+ew = T.EwmaDetector(mu0=21.0, sigma=0.45, lam=0.1, L=3.0)
+cs = T.CusumDetector(mu0=0.0565, k=0.075, h=2.3)
+d = T.downsample(t_seconds, values, 600.0)             # dict: t, mean, min, max, count per 10-minute window</code></pre>
+<pre class="python"><code>from dashboard import Store, create_app, mqtt_ingest   # run:  python dashboard.py   then open http://127.0.0.1:5000</code></pre>
+<p>The module and README are in <code>codes/cloud/telemetry_np/</code>. Its ten tests check: 25 CBOR encodings and decodes (including half and single floats on decode); 300 random CBOR round trips; the packed binary sizes (7 and 11 bytes) and its <span class="math inline">\pm0.005</span> <span class="math inline">^\circ</span>C round trip; the time-series range query and downsampling (12 windows, mean 4.5, minimum 0, maximum 9, count 10); the three detectors’ basic behaviour; that the EWMA beats the z-score on a small step and the z-score beats the EWMA on a spike (200 runs); that the CUSUM has a false-alarm rate under 1% and detects a one-sigma shift in under 15 samples; the edge arithmetic; the dashboard API, alerts and stale logic with a controllable clock; and the MQTT ingest end to end through our broker (a junk payload is ignored).</p>
+<p><em>What would look different if the theory were wrong?</em> If (1) were wrong, the measured step delay (5.4) would not sit near the computed 5.8, nor the drift delay (36) near 43. If (3) were wrong, the CUSUM baseline would not need to be set to a shift of <span class="math inline">-0.149</span> and the detection would fail; the mean residual in fault runs followed it. If the selection-bias explanation were wrong, recalibrating the baseline would not change the detection delay; it halves it (54.6 to 25.7 minutes, with the same <span class="math inline">k</span> and <span class="math inline">h</span>).</p>
+<h2 id="analyze">5. Analyze</h2>
+<p><strong>Limits.</strong> As the aggregation window grows, volume falls as <span class="math inline">1/w</span> but a spike’s visibility in the mean falls as <span class="math inline">1/n</span>; with min and max kept it does not fall. As <span class="math inline">\lambda\to1</span> the EWMA becomes the fixed limit; as <span class="math inline">\lambda\to0</span> it becomes sluggish (delay <span class="math inline">\to\infty</span>). As <span class="math inline">k</span> grows false alarms vanish and so do small detections.</p>
+<p><strong>Dominance.</strong> For a node that reconnects each wake-up the connection (about 485 of 547 bytes even with the smallest payload) dominates the cost of the payload format; for a persistent connection the payload is 70 of 181 bytes and the format matters. For detection delay on a step, the ratio (limit)/(step) dominates; for false alarms, the number of tests per day dominates.</p>
+<p><strong>Order-of-magnitude estimate.</strong> False alarms per day <span class="math inline">\approx</span> (probability per sample) <span class="math inline">\times</span> (samples per day): a few per mille times thousands of samples gives tens per day: a design must be done on this product, not on the per-sample probability.</p>
+<p><strong>Sensitivity.</strong> The twin’s delay depends on the ratio (fault shift)/(noise): <span class="math inline">-0.149</span> against 0.28; halving the sensor noise would reduce the delay by roughly a factor of four (delay scales with <span class="math inline">\sigma^2/\text{shift}^2</span> for a fixed false-alarm rate). The EWMA on a drift is very sensitive to the drift rate: delay about <span class="math inline">(\text{limit}+r(1-\lambda)/\lambda)/r</span>.</p>
+<p><strong>Failure modes.</strong> (1) <em>Mean-only aggregation</em>: spikes vanish. (2) <em>Learning detectors absorbing a fault</em>: the z-score on a drift. (3) <em>A wrong model</em>: the twin alarms falsely or hides a fault. (4) <em>Selection bias</em>: residuals on controller-chosen cases. (5) <em>Alert fatigue</em>: too many false alarms. (6) <em>Detectors blind to known events</em>: the watering outliers. (7) <em>Stale data shown as current</em>: a dead node’s last value presented as live.</p>
+<p><strong>Items used from the pedagogy checklist:</strong> limits, dominance, estimate, sensitivity, failure modes, convergence (Monte Carlo against formulas), residual structure (the selection bias in the residual), uncertainty (false-alarm and detection rates), a priori versus a posteriori (the delays were predicted before they were measured), and provenance (CBOR verified against an independent library).</p>
+<h2 id="evaluate">6. Evaluate</h2>
+<p><strong>JSON versus CBOR versus packed binary.</strong> JSON is the best choice when messages are few, humans read them and bandwidth is cheap; CBOR when you want a self-describing binary format and the receivers are programs (it also has a standard for compact sensor data and for signed messages, named only); packed binary when every byte counts (a LoRa node) and both ends are under your control, at the price of a layout that must be versioned. The saving is large only when connection overhead is small (33% on a persistent connection, 9.7% on a fresh one).</p>
+<p><strong>Which detector.</strong> A fixed limit for hard physical limits (a freezing greenhouse) and spikes; a z-score when the baseline is unknown and the anomaly is a point; an EWMA or CUSUM when the baseline is known and small lasting changes matter; a twin when a model exists and the fault is in an actuator that a controller hides. In practice they are combined. Machine-learning detectors (autoencoders, isolation forests; named only) handle seasonal and multivariate data, at the price of training data, tuning and opaque alarms; the simple detectors are a baseline that any ML detector should be shown to beat.</p>
+<p><strong>Edge versus cloud.</strong> Do at the edge what needs speed or must survive an outage (alerts, aggregation, control); do in the cloud what needs scale or history (long-term storage, fleet-wide analytics, model training). Neither is free: the edge must be updated and secured (Unit 7), the cloud costs money and latency.</p>
+<p><strong>Context.</strong> Statistical process control, the origin of the EWMA and CUSUM charts, comes from manufacturing quality control in the 1950s (from memory, not verified here); the idea of a digital twin comes from engineering simulation. <strong>When NOT to use these methods:</strong> when the noise is far from independent and Gaussian (check with a residual plot, Unit 3), when the baseline changes legitimately and often (watering, weather), or when a hard physical limit is the only thing that matters.</p>
+<p><strong>Honesty about this Unit’s numbers.</strong> The detector and twin results come from simulations with <em>assumed</em> noise levels, fault sizes and a one-room model with round-number parameters; they test the algorithms, not a real greenhouse. The CBOR codec was checked against an independent library; the dashboard was tested with a Flask test client and through our broker, not in a browser or at scale. Cloud prices and the 540-byte reading are assumptions.</p>
+<h2 id="create">7. Create</h2>
+<div class="create" title="What you can build from this">
+<ol type="1">
+<li><strong>Add CBOR to the node.</strong> Replace the payload of the node firmware with the 20-byte integer-key CBOR message and measure the saving for your own connection pattern.</li>
+<li><strong>A seasonal baseline.</strong> Fit a 24-hour sinusoid to a week of temperature, run the EWMA on the residual from it, and compare false alarms with the plain EWMA.</li>
+<li><strong>Tell the detector about watering.</strong> Give <code>Store</code> a list of command times and suppress outlier alerts for 10 minutes after each; count the false alarms removed.</li>
+<li><strong>A twin for the soil.</strong> Model the soil moisture as an exponential drying curve with a watering input, and detect a leaking valve with a CUSUM on the residual.</li>
+<li><strong>Could become a package module:</strong> <code>iotrobotics.telemetry</code> with the codecs, <code>TimeSeries</code>, <code>downsample</code> and the four detectors, reused by the capstone (Unit 12).</li>
+</ol>
+</div>
+<p><strong>Running project, Layer 5: the greenhouse dashboard.</strong> The node sends a <strong>20-byte CBOR</strong> reading (integer keys) or an 11-byte packed one; a <strong>gateway</strong> holds a persistent MQTT connection, aggregates per 10 minutes (mean, minimum, maximum, count) and forwards batches; the dashboard shows the last values with a stale flag, and alerts on fixed limits and on a z-score with <span class="math inline">k=4</span>. A CUSUM on a twin residual watches the heater. Updated requirements:</p>
+<table>
+<caption>running-project requirements updated by Unit 6. The detector results rest on assumed noise and fault sizes and have not been tried on real data.</caption>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">id</th>
+<th style="text-align: left;">requirement</th>
+<th style="text-align: left;">status after Unit 6</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">R1</td>
+<td style="text-align: left;">readings every 60 s</td>
+<td style="text-align: left;">unchanged; payload now 20 bytes (CBOR)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R2</td>
+<td style="text-align: left;">telemetry to the dashboard under 2 s</td>
+<td style="text-align: left;">dashboard polls every 5 s; the data path adds only tens of ms; the 2 s target is met by design (to be measured in Unit 12)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R4</td>
+<td style="text-align: left;">node battery 30 days</td>
+<td style="text-align: left;">unchanged by the payload (547 bytes on the wire against 606: the connection dominates)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R18</td>
+<td style="text-align: left;">the dashboard marks a silent node</td>
+<td style="text-align: left;">implemented: stale after three periods (180 s); zone 3 shown stale after 10 minutes of silence</td>
+</tr>
+<tr>
+<td style="text-align: left;">R19 (new)</td>
+<td style="text-align: left;">at most one false alarm per day per zone</td>
+<td style="text-align: left;">needs limits near <span class="math inline">\pm3.85\sigma</span> for 6 sensors; the dashboard uses <span class="math inline">k=4</span> for the z-score</td>
+</tr>
+<tr>
+<td style="text-align: left;">R20 (new)</td>
+<td style="text-align: left;">a heater fault is detected within one hour</td>
+<td style="text-align: left;">the twin CUSUM detected a 70% heater in 25.4 minutes on average (100 of 100 runs); temperature statistics alone took 104 minutes and missed 15%</td>
+</tr>
+<tr>
+<td style="text-align: left;">R21 (new)</td>
+<td style="text-align: left;">cloud data under 1 MB per day for 100 nodes</td>
+<td style="text-align: left;">met with 10-minute edge aggregation (0.47 MB per day against 77.8 MB raw)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="visualization-lesson">8. Visualization lesson</h2>
+<table>
+<caption>the chart types of this Unit. Ladder: <em>remember</em> the names; <em>understand</em> what each shows; <em>apply</em> the call; <em>analyse</em> how it misleads; <em>evaluate</em> when a table is better (the detector table of Section 3.3.3: the reader wants exact delays and false-alarm rates); <em>create</em> a new one (a detection-delay curve against false-alarm rate: an ROC-style trade-off).</caption>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Chart type</th>
+<th style="text-align: left;">Best for</th>
+<th style="text-align: left;">How it misleads</th>
+<th style="text-align: left;">matplotlib call</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">payload-size bar chart (paired panels)</td>
+<td style="text-align: left;">comparing representations of the same data</td>
+<td style="text-align: left;">two panels with different scales invite false comparison (message vs exchange)</td>
+<td style="text-align: left;"><code>ax.bar(x, v)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">raw series with an aggregate band (min to max) and a mean line</td>
+<td style="text-align: left;">what aggregation keeps and loses</td>
+<td style="text-align: left;">a band drawn from window extremes looks like a confidence interval; it is a range</td>
+<td style="text-align: left;"><code>ax.fill_between(t, lo, hi)</code>, <code>ax.plot(t, mean, "o-")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">alarm raster (tick marks below the trace)</td>
+<td style="text-align: left;">when each detector fired</td>
+<td style="text-align: left;">a long run of ticks looks like one event; count alarms, not ticks</td>
+<td style="text-align: left;"><code>ax.plot(idx, np.full(len(idx), y), "|")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">delay bars with a “missed” marker</td>
+<td style="text-align: left;">comparing detectors on delay and reliability</td>
+<td style="text-align: left;">a bar shows only detected runs; the marker and the detection rate are essential</td>
+<td style="text-align: left;"><code>ax.bar(...)</code>, <code>ax.plot(x, 2, "x")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">residual scatter with a shift line</td>
+<td style="text-align: left;">a model’s prediction error over time</td>
+<td style="text-align: left;">the eye cannot see a shift smaller than the noise; the CUSUM row below does</td>
+<td style="text-align: left;"><code>ax.plot(t, r, ".")</code>, <code>ax.axhline(shift, ls=":")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">three-row shared-axis plot (signal, residual, alarm)</td>
+<td style="text-align: left;">linking cause, evidence and detection</td>
+<td style="text-align: left;">rows must share the x-axis exactly; unequal heights suggest unequal importance</td>
+<td style="text-align: left;"><code>plt.subplots(3, 1, sharex=True, gridspec_kw=...)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">status tiles</td>
+<td style="text-align: left;">the current state of many things at a glance</td>
+<td style="text-align: left;">colour alone (red/green) fails for colour-blind readers; add the word “STALE”</td>
+<td style="text-align: left;"><code>ax.add_patch(Rectangle(...))</code>, <code>ax.text(...)</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading Figure 4 as a chart.</strong> The middle panel is the point: each grey dot is a residual too noisy to judge alone; only the bottom row, which accumulates them, makes the shift visible. A chart of raw residuals would have led an observer to say “nothing is wrong”.</p>
+<h2 id="problem-set">9. Problem set</h2>
+<div class="exercise" title="Graded exercises">
+<ol type="1">
+<li>(easy) Encode the integer 500 and the string <code>"ok"</code> in CBOR (use the head rules of Section 3.3.1); give the hexadecimal bytes.</li>
+<li>(medium) A node sends readings of 4 values (each an integer below 5000) once a minute. Compare long-key JSON (use 12-character keys), CBOR with integer keys and packed binary, in bytes per message, and say which you would use for a LoRa node.</li>
+<li>(medium-hard) For an EWMA with <span class="math inline">\lambda=0.05</span> and <span class="math inline">L=3</span> on a signal of <span class="math inline">\sigma=1</span>, find the steady limit and the number of samples to detect a step of <span class="math inline">+1\sigma</span>.</li>
+<li>(hard) A twin predicts with <span class="math inline">\tau=60</span> min but the true <span class="math inline">\tau</span> is 66 min (a model error of 10%). Estimate the systematic residual during on-minutes in steady operation at 21 <span class="math inline">^\circ</span>C and say whether the CUSUM of Section 3.3.4 would alarm.</li>
+<li>(hardest) Design a “warning then alarm” scheme for the greenhouse temperature that keeps false alarms under one per day over 6 sensors at one reading per minute and detects a 1 <span class="math inline">^\circ</span>C level shift (<span class="math inline">\sigma=0.3</span> <span class="math inline">^\circ</span>C) within 30 minutes. State the detectors, their parameters, and show by simulation with <code>detection_stats</code> that you meet both.</li>
+</ol>
+</div>
+<h2 id="retrieval-practice-and-recap">10. Retrieval practice and recap</h2>
+<p><strong>Answers to the Section 2 predictions.</strong></p>
+<ol type="1">
+<li>About 10% (59 bytes of 606: 9.7%), because the connection overhead dominates.</li>
+<li>0.3 <span class="math inline">^\circ</span>C (<span class="math inline">3/10</span>): the mean hides the glitch; the maximum shows nearly all of it (2.3 <span class="math inline">^\circ</span>C).</li>
+<li>Over 20 (23 per day).</li>
+</ol>
+<p><strong>Answers to the Section 2 recall quiz.</strong></p>
+<ol type="1">
+<li>Packed binary needs no field names; it costs flexibility: sender and receiver must agree on the layout and keep it versioned.</li>
+<li>A spike moves the mean by only its size divided by the number of samples; the extremes keep it visible.</li>
+<li>EWMA (or CUSUM) for a slow drift; a fixed limit or z-score for a single spike.</li>
+<li>The measurement minus the model’s prediction of it.</li>
+<li>When its last value is older than a few reporting periods (three in the dashboard).</li>
+</ol>
+<p><strong>Explain it to a friend.</strong></p>
+<ul>
+<li>Why can sending fewer bytes per reading save so little battery on a node that sleeps?</li>
+<li>Why does a thermostat make a heater fault harder to see, and how does a model help?</li>
+<li>Why do many “small” false-alarm rates add up to a flood?</li>
+</ul>
+<p><strong>Re-derive by hand tomorrow, without looking:</strong> (a) the EWMA control limit <span class="math inline">L\sigma\sqrt{\lambda/(2-\lambda)}</span> and the step-crossing time; (b) the twin’s residual shift <span class="math inline">(p-1)k\tau(1-e^{-\Delta t/\tau})</span>; (c) false alarms per day <span class="math inline">=P(|Z|&gt;k)\times</span> samples per day.</p>
+<h2 id="where-next">11. Where next</h2>
+<ul>
+<li><strong>Unit 7</strong> secures what we built: threat modelling, default passwords and the Mirai botnet, message integrity with HMAC, signed updates and privacy, with a demonstration that forges and then blocks a command to the rover.</li>
+<li>Terms named here but not taught: machine-learning anomaly detection, databases (named), Kalman filtering (Unit 10). They are registered in CURRICULUM.md.</li>
+<li><strong>Open threads:</strong> the detector and twin results use assumed noise, fault sizes and a round-number room model; the dashboard has not been run in a browser or under load; the RFC 8949 text was not fetched (the CBOR codec was checked against cbor2 instead); the cloud prices are assumptions.</li>
+</ul>
+<p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u5.html">&larr; Networking</a><a class="btn" href="u7.html">Security &rarr;</a></p></article></div></main>
+<footer><div class="wrap">Internet of Things and Robotics crash course · Code is MIT-licensed; PDFs are for study use. Companion to the <a href="../../index.html">Generative AI and LLMs course</a>.</div></footer>
+<script>
+document.getElementById('theme').onclick=function(){var d=document.documentElement,c=d.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'),n=c==='dark'?'light':'dark';d.dataset.theme=n;try{localStorage.setItem('theme',n)}catch(e){}};
+</script>
+<script src="../../assets/vendor/katex/katex.min.js"></script><script>document.querySelectorAll(".math").forEach(function(n){var d=n.classList.contains("display");var t=n.textContent.replace(/^\\[\(\[]|\\[\)\]]$/g,"");try{katex.render(t,n,{displayMode:d,throwOnError:false})}catch(e){}});</script></body></html>

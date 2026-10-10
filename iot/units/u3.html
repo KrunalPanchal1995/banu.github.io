@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unit 3: Sensors and Actuators: Measuring, Calibrating, Filtering, Moving · IoT and Robotics</title>
+<meta name="description" content="From volts and sensors to MQTT, security, kinematics, control, localisation and navigation, built around one running project: a Smart Greenhouse Rover. Twelve units with a PDF and runnable code each, a 14-lab track and an assessment bank. Built for a B.Tech student; simulation-first, no hardware needed.">
+<link rel="stylesheet" href="../../assets/css/style.css"><link rel="stylesheet" href="../assets/css/iot.css">
+<script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="stylesheet" href="../../assets/vendor/katex/katex.min.css"></head><body>
+<header class="site-head"><div class="wrap">
+<a class="brand" href="../index.html">IoT <span>&amp;</span> Robotics<span class="long"> crash course</span></a>
+<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
+</div></header>
+<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 3</strong><a href="#session-map">Session map</a><a href="#terms-the-term-tree">1. Terms: the term tree</a><a href="#remember">2. Remember</a><a href="#understand-the-derivation">3. Understand: the derivation</a><a href="#apply">4. Apply</a><a href="#analyze">5. Analyze</a><a href="#evaluate">6. Evaluate</a><a href="#create">7. Create</a><a href="#visualization-lesson">8. Visualization lesson</a><a href="#problem-set">9. Problem set</a><a href="#retrieval-practice-and-recap">10. Retrieval practice and recap</a><a href="#where-next">11. Where next</a></aside><article class="doc"><p><span class="chip">Unit 3</span> <span class="chip ">ready</span></p><h1>Sensors and Actuators: Measuring, Calibrating, Filtering, Moving</h1><p class="lede">Accuracy against precision, calibration by least squares, aliasing, filters, encoders, servos and steppers.</p><div class="dl"><a class="btn primary" href="../downloads/u3/u3-notes.pdf" download>PDF notes<small>990 KB</small></a><a class="btn" href="../downloads/u3/u3-notes.docx" download>Word (.docx)<small>769 KB</small></a><a class="btn" href="../downloads/u3/u3-code.zip" download>All code (.zip)<small>31 KB</small></a></div><h2 id="session-map">Session map</h2>
+<div class="keyidea" title="Outcome of this session">
+<p>After this session you can:</p>
+<ol type="1">
+<li>separate a sensor’s <strong>accuracy</strong> (bias) from its <strong>precision</strong> (noise), and show that mean squared error is bias squared plus variance;</li>
+<li>derive the least-squares line, its slope uncertainty, and use it (or a quadratic) to calibrate a curved soil-moisture sensor, with the error that is left;</li>
+<li>explain <strong>aliasing</strong>: find the frequency a too-slowly sampled signal pretends to have, and choose a sampling plan that defeats mains interference;</li>
+<li>design a moving-average or exponential filter from a noise target, and show that the two families give identical noise reduction and delay when <span class="math inline">\alpha=2/(n+1)</span>;</li>
+<li>decode a quadrature wheel encoder, turn counts into distance and speed, and pick the speed-estimation window; describe how a servo, a stepper and a relay are driven.</li>
+</ol>
+</div>
+<ul>
+<li><strong>Prerequisites:</strong> Unit 1 (noise, sampling period, first-order response), Unit 2 (divider, ADC step and its <span class="math inline">q/\sqrt{12}</span> error, RC filter). Algebra, mean and variance (defined here as needed).</li>
+<li><strong>Difficulty ladder used:</strong> easy → medium → medium-hard → hard (Sections 3.1 to 3.4); the hardest tier is posed as open questions in Section 3.5.</li>
+<li><strong>Deliverables:</strong> this document (.tex, .pdf, .docx), 6 figures, the module <code>codes/sensors/sensors_np/</code> (sensor model, bias/variance, least squares, moving average and EMA, aliasing, quadrature decoder, NTC, ultrasonic, servo, stepper; 8 tests), and the running-project sensing chain of Section 7.</li>
+<li><strong>Source anchors:</strong> all formulas are derived in the text; no paper or datasheet is quoted. The sound-speed formula <span class="math inline">331.3+0.606\,T</span> is the standard linear approximation. <strong>The soil sensor curve, noise, drift, thermistor parameters, encoder and servo numbers are assumed round values, not measurements of a named part.</strong> Every other number comes from the scripts in <code>figures/</code> (<code>fig01</code> to <code>fig06</code>, <code>analysis_numbers.py</code>) or the module tests.</li>
+</ul>
+<h2 id="terms-the-term-tree">1. Terms: the term tree</h2>
+<table>
+<colgroup>
+<col style="width: 22%" />
+<col style="width: 14%" />
+<col style="width: 37%" />
+<col style="width: 13%" />
+<col style="width: 10%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Term</th>
+<th style="text-align: center;">Symbol</th>
+<th style="text-align: left;">One-line meaning</th>
+<th style="text-align: center;">Where it appears</th>
+<th style="text-align: center;">New / known</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">range</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the interval of true values the sensor can report</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">resolution (of a sensor)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">smallest change in the quantity that changes the reading</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">accuracy and bias</td>
+<td style="text-align: center;"><span class="math inline">b</span></td>
+<td style="text-align: left;">closeness of the average reading to the truth; bias is the average error</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">precision</td>
+<td style="text-align: center;"><span class="math inline">\sigma</span></td>
+<td style="text-align: left;">repeatability: the spread of readings of an unchanged quantity</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">mean squared error</td>
+<td style="text-align: center;">MSE</td>
+<td style="text-align: left;">average of (reading minus truth) squared; equals bias<span class="math inline">^2</span> + variance</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">drift</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a slow change of the sensor’s error with time</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">calibration</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">fitting a map from raw reading to true value using known references</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">least squares</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">choosing the curve that minimises the sum of squared residuals</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">residual</td>
+<td style="text-align: center;"><span class="math inline">e_i</span></td>
+<td style="text-align: left;">data value minus fitted value</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">sampling rate</td>
+<td style="text-align: center;"><span class="math inline">f_s</span></td>
+<td style="text-align: left;">number of readings per second, <span class="math inline">1/T_s</span></td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">known</td>
+</tr>
+<tr>
+<td style="text-align: left;">Nyquist frequency</td>
+<td style="text-align: center;"><span class="math inline">f_s/2</span></td>
+<td style="text-align: left;">half the sampling rate: the highest frequency that can be represented</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">aliasing</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a fast signal appearing as a slow one because of too few samples</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">moving average</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">mean of the last <span class="math inline">n</span> readings</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">exponential filter (EMA)</td>
+<td style="text-align: center;"><span class="math inline">\alpha</span></td>
+<td style="text-align: left;"><span class="math inline">y_k=y_{k-1}+\alpha(x_k-y_{k-1})</span>: a first-order filter in code</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">noise gain</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">std of the filtered noise divided by std of the input noise</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">mean delay</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">average lag of a filter’s output behind its input, in samples</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">thermistor (NTC)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">resistor whose resistance falls as temperature rises</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">capacitive sensor</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">measures a change in capacitance (used for soil moisture, humidity)</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">time of flight (ultrasonic)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">distance from the round-trip time of a sound pulse</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">burst averaging</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">averaging several fast readings taken over a whole interference period</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">quadrature encoder</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">two pulse trains A and B, 90 degrees apart, giving position and direction</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">counts per revolution</td>
+<td style="text-align: center;">CPR</td>
+<td style="text-align: left;">encoder counts per turn of the wheel</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">servo</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">motor with built-in position control, commanded by a pulse width</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">stepper motor</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">motor that moves a fixed angle per pulse</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">relay</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">electrically operated mechanical switch</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+</tbody>
+</table>
+<p>Terms <em>used but not taught here</em>: IMU (named in Section 3.1; sensor fusion in Unit 10), odometry (Unit 8), PID (Unit 9), median filter (named in Section 3.5).</p>
+<h2 id="remember">2. Remember</h2>
+<div class="definition" title="What a sensor is, and what its datasheet promises">
+<p>A <strong>sensor</strong> turns a physical quantity into an electrical one, and the ADC of Unit 2 turns that into a number. Its <strong>range</strong> is the interval of true values it can report; its <strong>resolution</strong> is the smallest change in the true value that changes the reading. Two different numbers describe how good it is:</p>
+<ul>
+<li><strong>Accuracy</strong>: how close the <em>average</em> reading is to the truth. The average error is the <strong>bias</strong> <span class="math inline">b</span>.</li>
+<li><strong>Precision</strong>: how closely repeated readings of an unchanged quantity agree: their standard deviation <span class="math inline">\sigma</span> (the <strong>noise</strong> of Unit 1).</li>
+</ul>
+<p>A sensor can be precise and wrong, or accurate and noisy. <strong>Drift</strong> is bias that changes with time.</p>
+</div>
+<div class="definition" title="Where each kind of error is fixed">
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">error</th>
+<th style="text-align: left;">what it looks like</th>
+<th style="text-align: left;">the cure</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">noise (<span class="math inline">\sigma</span>)</td>
+<td style="text-align: left;">scatter around the average</td>
+<td style="text-align: left;">average more readings, or filter</td>
+</tr>
+<tr>
+<td style="text-align: left;">bias, gain and curvature errors</td>
+<td style="text-align: left;">consistent offset or wrong scale</td>
+<td style="text-align: left;"><strong>calibrate</strong> against references</td>
+</tr>
+<tr>
+<td style="text-align: left;">drift</td>
+<td style="text-align: left;">the offset moves with time</td>
+<td style="text-align: left;">recalibrate at intervals</td>
+</tr>
+<tr>
+<td style="text-align: left;">aliasing</td>
+<td style="text-align: left;">a slow wave that is not in the signal</td>
+<td style="text-align: left;">sample faster, or filter <em>before</em> sampling</td>
+</tr>
+<tr>
+<td style="text-align: left;">quantisation</td>
+<td style="text-align: left;">steps of one ADC code</td>
+<td style="text-align: left;">more bits, or average (Unit 2)</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Memory hooks.</strong></p>
+<ul>
+<li><em>Accuracy = aim, precision = grouping,</em> like darts: a tight group in the wrong place is precise but not accurate. <strong>Averaging cures scatter, never aim.</strong></li>
+<li><em>Calibrate first, filter second.</em> A filter smooths what is there, including a wrong scale.</li>
+<li><em>Sample twice per cycle at least, but filter before you sample.</em> (Nyquist, Section 3.3.)</li>
+<li><em>An EMA is a one-number moving average.</em> It needs only the previous output.</li>
+</ul>
+<p><strong>Before you read on: three predictions</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>A sensor reads a true 25.0 <span class="math inline">^\circ</span>C as 26.5 <span class="math inline">^\circ</span>C on average, with scatter 0.1 <span class="math inline">^\circ</span>C. If you average 1000 readings, what error remains: about 0.003, about 0.1, or about 1.5 <span class="math inline">^\circ</span>C?</li>
+<li>A 5 Hz signal is sampled at 6 Hz. What frequency appears in the samples?</li>
+<li>A 19-point moving average and an exponential filter with <span class="math inline">\alpha=0.1</span> both smooth noise. Which reacts to a step sooner?</li>
+</ol>
+<p><strong>Recall quiz</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>What is the difference between accuracy and precision?</li>
+<li>Why does averaging many readings not remove a bias?</li>
+<li>What is the highest frequency a sampling rate <span class="math inline">f_s</span> can represent?</li>
+<li>What does the A/B pair of a quadrature encoder give that a single pulse train cannot?</li>
+<li>What must you do to a thermistor circuit to reduce its self-heating?</li>
+</ol>
+<h2 id="understand-the-derivation">3. Understand: the derivation</h2>
+<h3 id="tier-1-easy-intuition-and-a-picture">3.1 Tier 1 (easy): intuition and a picture</h3>
+<p>The greenhouse rover needs numbers: how wet is the soil, how warm is the air, how far did the wheels turn, how far is the wall. A <strong>resistive</strong> soil sensor passes a current between two probes and corrodes in a few weeks; a <strong>capacitive</strong> one measures how the water changes the capacitance of a plate pair and lasts. A <strong>thermistor</strong> changes resistance with temperature. An <strong>IMU</strong> (inertial measurement unit) reports acceleration and rotation rate. An ultrasonic sensor times a sound echo. All of them produce a voltage or a pulse that Unit 2’s circuits convert to a number.</p>
+<p>The number is never exactly the truth. Figure 1 shows four simulated temperature sensors reading a true 25.0 <span class="math inline">^\circ</span>C a thousand times each: A is accurate and precise, B accurate but noisy, C precise but biased by 1.5 <span class="math inline">^\circ</span>C, D both biased and noisy. Look at C against B: the scatter of C is eight times smaller, yet its <em>error</em> is twice as large (RMSE 1.505 against 0.801 <span class="math inline">^\circ</span>C). Scatter you can average away; a bias you cannot.</p>
+<figure>
+<img src="../assets/fig/u3/fig01_accuracy.png" style="width:95.0%" alt="Left: histograms of 1000 readings of a true 25.0 ^\circC by four simulated sensors (A: bias 0, noise 0.1; B: bias 0, noise 0.8; C: bias 1.5, noise 0.1; D: bias 1.5, noise 0.8). Right: each sensor’s mean squared error split into bias squared (orange) and variance (blue); the totals give RMSE 0.10, 0.80, 1.50 and 1.71 ^\circC. Prediction 1 of Section 2: averaging a thousand readings of sensor C leaves the 1.5 ^\circC bias." />
+<figcaption aria-hidden="true">Left: histograms of 1000 readings of a true 25.0 <span class="math inline">^\circ</span>C by four simulated sensors (A: bias 0, noise 0.1; B: bias 0, noise 0.8; C: bias 1.5, noise 0.1; D: bias 1.5, noise 0.8). Right: each sensor’s mean squared error split into bias squared (orange) and variance (blue); the totals give RMSE 0.10, 0.80, 1.50 and 1.71 <span class="math inline">^\circ</span>C. Prediction 1 of Section 2: averaging a thousand readings of sensor C leaves the 1.5 <span class="math inline">^\circ</span>C bias.</figcaption>
+</figure>
+<h3 id="tier-2-medium-the-definitions-made-precise">3.2 Tier 2 (medium): the definitions made precise</h3>
+<p>Let the true value be <span class="math inline">t</span> and let a sensor give readings <span class="math inline">r_1,\dots,r_N</span> with mean <span class="math inline">\bar r</span>. The <strong>bias</strong> is <span class="math inline">b=\bar r-t</span>, the <strong>noise</strong> (precision) is the standard deviation <span class="math inline">\sigma</span> of the readings, and the <strong>mean squared error</strong> is <span class="math inline">\mathrm{MSE}=\frac1N\sum(r_i-t)^2</span>. These satisfy an exact identity: add and subtract <span class="math inline">\bar r</span> inside the square, <span class="math display"> \begin{aligned}
+\mathrm{MSE}&amp;=\frac1N\sum_i\big((r_i-\bar r)+(\bar r-t)\big)^2 &amp;&amp;\text{(add and subtract }\bar r)\\
+&amp;=\frac1N\sum_i(r_i-\bar r)^2+2(\bar r-t)\frac1N\sum_i(r_i-\bar r)+(\bar r-t)^2 &amp;&amp;\text{(expand the square)}\\
+&amp;=\sigma^2+0+b^2. &amp;&amp;\text{(the readings&#39; deviations from their mean sum to zero)}
+\end{aligned} \tag{1}</span> So <span class="math inline">\mathrm{RMSE}=\sqrt{b^2+\sigma^2}</span>. Figure 1 (right) confirms it: sensor D has <span class="math inline">b=1.511</span> and <span class="math inline">\sigma=0.810</span>, so <span class="math inline">\sqrt{1.511^2+0.810^2}=1.715</span>, equal to its measured RMSE of 1.715. Averaging <span class="math inline">n</span> independent readings divides the <em>variance</em> of the noise by <span class="math inline">n</span> (Section 3.3.4), but the bias term <span class="math inline">b^2</span> is untouched: <strong>the floor of the error is the bias.</strong> That is the reason calibration exists.</p>
+<h3 id="tier-3-medium-hard-the-main-derivations">3.3 Tier 3 (medium-hard): the main derivations</h3>
+<h4 id="calibration-by-least-squares-the-straight-line">3.3.1 Calibration by least squares: the straight line</h4>
+<p>Suppose we have <span class="math inline">n</span> reference measurements <span class="math inline">(x_i,y_i)</span>, where <span class="math inline">x_i</span> is the sensor’s raw output (volts) and <span class="math inline">y_i</span> the true quantity from a trusted reference (say, the water content found by weighing and oven-drying a soil sample). We want a line <span class="math inline">y=a+bx</span> that turns raw readings into true values. <strong>Least squares</strong> picks <span class="math inline">a,b</span> to minimise the sum of squared <strong>residuals</strong> <span class="math inline">e_i=y_i-(a+bx_i)</span>: <span class="math display"> J(a,b)=\sum_{i=1}^n\big(y_i-a-bx_i\big)^2. \tag{2}</span> At the minimum both partial derivatives vanish: <span class="math display"> \begin{aligned}
+\frac{\partial J}{\partial a}&amp;=-2\sum_i(y_i-a-bx_i)=0 \;\Rightarrow\; a=\bar y-b\bar x &amp;&amp;\text{(the line passes through the means)}\\
+\frac{\partial J}{\partial b}&amp;=-2\sum_i x_i(y_i-a-bx_i)=0 &amp;&amp;\text{(second normal equation)}\\
+&amp;\Rightarrow\;\sum_i x_iy_i-n\bar y\bar x+bn\bar x^2-b\sum_ix_i^2=0 &amp;&amp;\text{(insert }a\text{ and expand)}\\
+&amp;\Rightarrow\; b=\frac{\sum_i(x_i-\bar x)(y_i-\bar y)}{\sum_i(x_i-\bar x)^2}=\frac{S_{xy}}{S_{xx}}. &amp;&amp;\text{(collect terms)}
+\end{aligned} \tag{3}</span> The module’s <code>fit_line</code> is this formula; its test reproduces <code>numpy.polyfit</code> to <span class="math inline">10^{-9}</span>.</p>
+<p><em>How uncertain is the slope?</em> Suppose the true relation is a line and each <span class="math inline">y_i</span> has independent noise of variance <span class="math inline">s^2</span>. Then <span class="math inline">b=\sum_i\frac{(x_i-\bar x)}{S_{xx}}\,y_i</span> is a <em>weighted sum</em> of the <span class="math inline">y_i</span>, so <span class="math display"> \mathrm{Var}(b)=\sum_i\frac{(x_i-\bar x)^2}{S_{xx}^2}\,s^2=\frac{s^2}{S_{xx}},\qquad\mathrm{SE}(b)=\frac{s}{\sqrt{S_{xx}}}. \tag{4}</span> Two lessons follow: <strong>more points</strong> (larger <span class="math inline">S_{xx}</span>) and <strong>a wider spread of <span class="math inline">x</span></strong> (larger <span class="math inline">S_{xx}</span> again) both shrink the uncertainty, so calibrate at both ends of the range, not clustered in the middle. For a noise <span class="math inline">s=0.5</span> and eight points on <span class="math inline">x=0\dots10</span> the formula gives <span class="math inline">\mathrm{SE}(b)=0.054</span>; repeating the experiment 5000 times with fresh noise gave a spread of fitted slopes of 0.0537. (When <span class="math inline">s</span> is not known it is estimated from the residuals with <span class="math inline">n-2</span> degrees of freedom, as <code>fit_line</code> does.)</p>
+<h4 id="a-curved-sensor-when-a-line-is-not-enough">3.3.2 A curved sensor: when a line is not enough</h4>
+<p>Our assumed capacitive soil sensor follows <span class="math inline">V=3.0-0.04\,w-0.0004\,w^2</span> volts, where <span class="math inline">w</span> is the water content in percent (volumetric water content, VWC) and noise of 0.015 V: a falling, curved relation (Figure 2, left). We fit <span class="math inline">w</span> as a function of the raw voltage <span class="math inline">V</span>, since that is the map the node will use: to regress in this direction is the standard practice, because it minimises the error in the quantity we want. Three calibrations, each repeated 300 times with fresh noise and judged on a dense test grid from 5 to 45 percent:</p>
+<table>
+<caption>calibration error of the assumed soil sensor. The line cannot follow the curvature, so its error is <em>systematic</em> (the bowed red and orange curves of Figure 2, right: up to 2.7 percent for the two-point line); the quadratic leaves only the noise-level residual (about 0.3 percent). More points average the noise; more parameters remove the curvature; and the two ends of the range alone are the worst choice for a curved sensor.</caption>
+<thead>
+<tr>
+<th style="text-align: left;">calibration</th>
+<th style="text-align: right;">mean RMSE (percent VWC)</th>
+<th style="text-align: left;">range over 300 repeats</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">two points (the ends), line</td>
+<td style="text-align: right;">1.95</td>
+<td style="text-align: left;">1.51 to 2.36</td>
+</tr>
+<tr>
+<td style="text-align: left;">six points, least-squares line</td>
+<td style="text-align: right;">0.92</td>
+<td style="text-align: left;">0.80 to 1.08</td>
+</tr>
+<tr>
+<td style="text-align: left;">six points, least-squares quadratic</td>
+<td style="text-align: right;">0.33</td>
+<td style="text-align: left;">0.24 to 0.47</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="../assets/fig/u3/fig02_calibration.png" style="width:95.0%" alt="Left: the assumed soil sensor’s voltage against true water content (grey), with six noisy calibration readings (blue). Right: the error left after three calibrations of the same readings, over the test range 5 to 45 percent. The two-point line (red) is wrong by up to 2.7 percent in the middle; the six-point line (orange) bows by 1.2 percent; the six-point quadratic (green) stays within about 0.3 percent. RMSE values are means over 300 repeats." />
+<figcaption aria-hidden="true">Left: the assumed soil sensor’s voltage against true water content (grey), with six noisy calibration readings (blue). Right: the error left after three calibrations of the same readings, over the test range 5 to 45 percent. The two-point line (red) is wrong by up to 2.7 percent in the middle; the six-point line (orange) bows by 1.2 percent; the six-point quadratic (green) stays within about 0.3 percent. RMSE values are means over 300 repeats.</figcaption>
+</figure>
+<h4 id="sampling-and-aliasing">3.3.3 Sampling and aliasing</h4>
+<p>A microcontroller sees a signal only at the sampling instants <span class="math inline">t_k=k/f_s</span>. Take a cosine of frequency <span class="math inline">f</span>: its samples are <span class="math inline">\cos(2\pi fk/f_s)</span>. Now consider a second cosine with frequency <span class="math inline">f+mf_s</span> for any whole number <span class="math inline">m</span>: <span class="math display"> \cos\!\Big(2\pi\frac{(f+mf_s)\,k}{f_s}\Big)=\cos\!\Big(2\pi\frac{fk}{f_s}+2\pi mk\Big)=\cos\!\Big(2\pi\frac{fk}{f_s}\Big), \tag{5}</span> because <span class="math inline">2\pi mk</span> is a whole number of turns. The two signals give <em>identical samples</em>: from the samples alone they cannot be told apart. That is <strong>aliasing</strong>. Every frequency is therefore indistinguishable from one frequency <span class="math inline">f_a</span> in the range 0 to <span class="math inline">f_s/2</span>, found by shifting <span class="math inline">f</span> by a multiple of <span class="math inline">f_s</span> and, if the result is negative, flipping its sign (a cosine is even; a sine flips sign): <span class="math display"> f_a=\big|f-f_s\cdot\mathrm{round}(f/f_s)\big|. \tag{6}</span> The limit <span class="math inline">f_s/2</span> is the <strong>Nyquist frequency</strong>: a signal can be represented only if all its content lies below it. Check: a 9 Hz sine sampled at 10 Hz gives exactly the same samples as a <em>negated</em> 1 Hz sine (<span class="math inline">f_a=|9-10|=1</span> Hz); the script shows the two sample sequences equal to <span class="math inline">10^{-9}</span>. At 10 Hz sampling, the true frequencies 4, 5.5, 9, 11 and 19 Hz appear as 4, 4.5, 1, 1 and 1 Hz (Figure 3, right: a triangle wave folding at multiples of 5 Hz). Prediction 2 of Section 2: a 5 Hz signal sampled at 6 Hz appears at <span class="math inline">|5-6|=1</span> Hz (Figure 3, left, orange).</p>
+<figure>
+<img src="../assets/fig/u3/fig03_aliasing.png" style="width:95.0%" alt="Left: a 5 Hz sine (grey) sampled at 50 Hz (green), 12 Hz (blue) and 6 Hz (orange). At 50 and 12 Hz the sampling rate exceeds the Nyquist limit of 10 Hz and the 5 Hz is preserved (the straight lines between samples are only for drawing; the original is recovered by proper reconstruction, not by joining dots); at 6 Hz it is below the limit and the samples trace a 1 Hz wave that is not in the signal. Right: apparent frequency against true frequency for f_s=10 Hz folds back at every multiple of 5 Hz." />
+<figcaption aria-hidden="true">Left: a 5 Hz sine (grey) sampled at 50 Hz (green), 12 Hz (blue) and 6 Hz (orange). At 50 and 12 Hz the sampling rate exceeds the Nyquist limit of 10 Hz and the 5 Hz is preserved (the straight lines between samples are only for drawing; the original is recovered by proper reconstruction, not by joining dots); at 6 Hz it is below the limit and the samples trace a 1 Hz wave that is not in the signal. Right: apparent frequency against true frequency for <span class="math inline">f_s=10</span> Hz folds back at every multiple of 5 Hz.</figcaption>
+</figure>
+<p>The cure is the order of operations: <strong>filter out frequencies above <span class="math inline">f_s/2</span> in analog hardware before the ADC</strong> (an RC low-pass from Unit 2 is the simplest), or sample fast and filter digitally. Filtering <em>after</em> sampling cannot remove an alias, because it is by then a legitimate-looking slow signal.</p>
+<h4 id="digital-filters-the-moving-average-and-the-exponential-filter">3.3.4 Digital filters: the moving average and the exponential filter</h4>
+<p>Two filters cover most embedded work. The <strong>moving average</strong> of the last <span class="math inline">n</span> readings is <span class="math inline">y_k=\frac1n\sum_{j=0}^{n-1}x_{k-j}</span>. The <strong>exponential filter</strong> (EMA) is the one-line recursion <span class="math inline">y_k=y_{k-1}+\alpha(x_k-y_{k-1})</span> with <span class="math inline">0&lt;\alpha\le1</span>: move the output a fraction <span class="math inline">\alpha</span> of the way toward the new reading. With <span class="math inline">\alpha=1-e^{-T_s/\tau}</span> it is the exact sampled version of the RC filter of Unit 2 with time constant <span class="math inline">\tau</span> (our <code>alpha_from_tau</code>): <span class="math inline">\alpha=0.0952</span> for <span class="math inline">\tau=0.1</span> s at 100 Hz.</p>
+<p><em>Noise gain.</em> If the readings are <span class="math inline">x_k=\text{signal}+\text{white noise}</span> of variance <span class="math inline">\sigma^2</span> (independent samples), a filter with impulse response <span class="math inline">h_k</span> (its output for a single unit pulse) produces noise variance <span class="math inline">\sigma^2\sum_kh_k^2</span>. For the moving average <span class="math inline">h_k=1/n</span> for <span class="math inline">n</span> terms, so <span class="math inline">\sum h_k^2=n/n^2=1/n</span> and the <strong>noise gain</strong> (output std over input std) is <span class="math inline">1/\sqrt n</span>. For the EMA, <span class="math inline">h_k=\alpha(1-\alpha)^k</span> and, summing the geometric series <span class="math inline">\sum_k q^{2k}=1/(1-q^2)</span> with <span class="math inline">q=1-\alpha</span>, <span class="math display"> \sum_{k\ge0}h_k^2=\frac{\alpha^2}{1-(1-\alpha)^2}=\frac{\alpha^2}{\alpha(2-\alpha)}=\frac{\alpha}{2-\alpha},\qquad\text{gain}=\sqrt{\frac{\alpha}{2-\alpha}}. \tag{7}</span></p>
+<p><em>Delay.</em> The price of smoothing is lag. Define the <strong>mean delay</strong> as the average of the impulse response’s time index, <span class="math inline">\sum_kk\,h_k/\sum_kh_k</span>. For the moving average it is <span class="math inline">\frac1n\sum_{k=0}^{n-1}k=\frac{n-1}{2}</span> samples. For the EMA, using <span class="math inline">\sum_kkq^k=q/(1-q)^2</span> with <span class="math inline">q=1-\alpha</span> and <span class="math inline">\sum_kh_k=1</span>, <span class="math display"> \sum_kk\,\alpha q^k=\alpha\,\frac{q}{(1-q)^2}=\frac{q}{\alpha}=\frac{1-\alpha}{\alpha}\ \text{samples}. \tag{8}</span></p>
+<p><em>The two families are the same at one point.</em> Set <span class="math inline">\alpha=2/(n+1)</span>. Then <span class="math inline">\alpha/(2-\alpha)=\frac{2/(n+1)}{2n/(n+1)}=1/n</span>, so the EMA noise gain is <span class="math inline">1/\sqrt n</span>, exactly the moving average’s; and <span class="math inline">(1-\alpha)/\alpha=\frac{(n-1)/(n+1)}{2/(n+1)}=\frac{n-1}{2}</span>, exactly the moving average’s delay. <strong>At equal noise reduction an EMA and a moving average lag equally</strong>, but the EMA needs one stored number instead of <span class="math inline">n</span> (the module’s tests check both identities to <span class="math inline">10^{-12}</span> and the delays from the impulse responses to <span class="math inline">10^{-9}</span>). With <span class="math inline">n=19</span> and <span class="math inline">\alpha=0.1</span>, a noisy step of sensor noise 0.2 is smoothed to a standard deviation of 0.024 (moving average) and 0.028 (EMA) from a raw 0.19, and the filtered signal reaches 90% of the step after 0.17 s and 0.18 s respectively (Figure 4, left, at 100 Hz). Prediction 3 of Section 2: neither is sooner. Measured gains on long white noise agree with theory to better than 1% from <span class="math inline">n=2</span> to <span class="math inline">64</span> (for example <span class="math inline">n=16</span>, <span class="math inline">\alpha=0.1176</span>: 0.2499 and 0.2500 measured against 0.2500 theory; <span class="math inline">n=64</span>: 0.1246 and 0.1246 against 0.1250).</p>
+<figure>
+<img src="../assets/fig/u3/fig04_filters.png" style="width:95.0%" alt="Left: a noisy step (grey) smoothed by a 19-point moving average (blue) and an EMA with \alpha=0.1=2/(19+1) (red, dashed): the two curves are nearly the same and reach 90% of the step in 0.17 s and 0.18 s. Right: measured noise gain of moving averages (blue dots) and of EMAs with \alpha=2/(n+1) (red crosses) against the theory 1/\sqrt n (grey line) for n=1 to 64: all agree." />
+<figcaption aria-hidden="true">Left: a noisy step (grey) smoothed by a 19-point moving average (blue) and an EMA with <span class="math inline">\alpha=0.1=2/(19+1)</span> (red, dashed): the two curves are nearly the same and reach 90% of the step in 0.17 s and 0.18 s. Right: measured noise gain of moving averages (blue dots) and of EMAs with <span class="math inline">\alpha=2/(n+1)</span> (red crosses) against the theory <span class="math inline">1/\sqrt n</span> (grey line) for <span class="math inline">n=1</span> to 64: all agree.</figcaption>
+</figure>
+<p>The trade is the same one as in Unit 1: a smoother output is a later output. A filter with a long window cannot be used inside a fast control loop, because delay is exactly what spoils a loop (Unit 1, Table 1).</p>
+<h3 id="tier-4-hard-generalisation-edge-cases-what-the-textbooks-gloss-over">3.4 Tier 4 (hard): generalisation, edge cases, what the textbooks gloss over</h3>
+<h4 id="temperature-a-thermistor-in-a-divider-and-its-self-heating">3.4.1 Temperature: a thermistor in a divider, and its self-heating</h4>
+<p>A negative-temperature-coefficient (NTC) <strong>thermistor</strong> follows the beta model <span class="math inline">R=R_0\exp\big(\beta(1/T-1/T_0)\big)</span> with <span class="math inline">T</span> in kelvin. For the assumed part, <span class="math inline">R_0=10\ \text{k}\Omega</span> at <span class="math inline">T_0=25\ ^\circ</span>C and <span class="math inline">\beta=3950</span> K (a typical catalogue value): 33.6 k<span class="math inline">\Omega</span> at 0 <span class="math inline">^\circ</span>C and 3.59 k<span class="math inline">\Omega</span> at 50 <span class="math inline">^\circ</span>C. Put it as the bottom resistor of Unit 2’s divider with 10 k<span class="math inline">\Omega</span> on top and 3.3 V: the output is 2.54 V at 0 <span class="math inline">^\circ</span>C, 1.65 V at 25 <span class="math inline">^\circ</span>C and 0.87 V at 50 <span class="math inline">^\circ</span>C, and the sensitivity (from the divider derivative and <span class="math inline">\mathrm{d}R/\mathrm{d}T=-\beta R/T^2</span>) is <span class="math inline">-30.9</span>, <span class="math inline">-36.7</span> and <span class="math inline">-24.3</span> mV per kelvin. A 12-bit ADC with its 0.806 mV step then resolves 0.026 K, 0.022 K and 0.033 K per code. The resolution is excellent; the accuracy is another matter, for the current through the thermistor heats it. At 25 <span class="math inline">^\circ</span>C, 1.65 V across 10 k<span class="math inline">\Omega</span> dissipates <span class="math inline">V^2/R=0.27</span> mW; with an <em>assumed</em> dissipation constant of 1 mW per kelvin, that is a 0.27 K error, larger than the ADC step by a factor of 12. The cure uses Unit 2: <strong>power the divider only during the reading</strong> (from a pin, for 20 ms once a minute): the average dissipation drops by 3000 times.</p>
+<h4 id="distance-ultrasonic-time-of-flight-and-the-speed-of-sound">3.4.2 Distance: ultrasonic time of flight and the speed of sound</h4>
+<p>An ultrasonic sensor sends a pulse and times its echo; the distance is <span class="math inline">d=vt/2</span>, the factor 2 because the sound goes there and back. The speed of sound in air depends on temperature, <span class="math inline">v\approx331.3+0.606\,T</span> m/s (<span class="math inline">T</span> in <span class="math inline">^\circ</span>C): 334.3, 343.4, 346.5 and 352.5 m/s at 5, 20, 25 and 35 <span class="math inline">^\circ</span>C. An object at 1.000 m in air at 25 <span class="math inline">^\circ</span>C returns an echo after 5.773 ms; a sensor that assumes 20 <span class="math inline">^\circ</span>C reports 0.9913 m, an error of <span class="math inline">-8.7</span> mm (<span class="math inline">-0.87\%</span>). In a cold greenhouse at 5 <span class="math inline">^\circ</span>C, the same echo converted with the 25 <span class="math inline">^\circ</span>C formula would put a 1.000 m object at 1.036 m (3.6% error). If the node has a temperature reading, it should use it. The echo time for an object 5 cm away is 289 <span class="math inline">\mu</span>s, for one at 4 m is 23.1 ms, so the useful measuring window and the maximum pulse rate follow from the range.</p>
+<h4 id="mains-interference-aliasing-in-the-field-and-burst-averaging">3.4.3 Mains interference, aliasing in the field, and burst averaging</h4>
+<p>The greenhouse has 50 Hz mains wiring. Suppose that couples a 50 Hz interference of amplitude 0.05 V onto the soil-sensor line (an assumed level). The node reads once a minute, a sampling rate of <span class="math inline">f_s=1/60</span> Hz, and the interference frequency is an exact multiple of it (<span class="math inline">50\times60=3000</span> cycles per minute), so equation (6) gives <span class="math inline">f_a=0</span> Hz: <strong>the 50 Hz appears as a constant offset in each reading whose size depends on the (random) phase at the instant of sampling</strong>. Simulating 20,000 single readings at random times gives a scatter of 0.0352 V, equal to the theory <span class="math inline">0.05/\sqrt2=0.0354</span> V. With the sensor’s slope of 0.06 V per percent at 25 percent VWC, that is 0.59 percent VWC: larger than the sensor’s own noise of 0.25 percent (0.015 V) and 150 times larger than the ADC’s RMS quantisation error of 0.0039 percent.</p>
+<p>The fix is not a digital filter after the fact (the alias is already in the number), but <strong>burst averaging</strong>: take 20 readings 1 ms apart (1 kHz) and average them. Twenty samples at 1 ms cover exactly one 20 ms mains period, and the mean of a sinusoid over a whole period is zero, so the interference vanishes: the simulated residual is <span class="math inline">4.5\times10^{-15}</span> V (rounding error). With 17 samples (not a whole period) the residual is still 0.0060 V. <strong>Choose the burst length to be a whole number of interference periods.</strong> The same burst also averages the sensor’s own white noise: from 0.25 percent for one reading to <span class="math inline">0.015/\sqrt{20}/0.06=0.056</span> percent.</p>
+<h4 id="wheel-encoders-position-direction-and-speed">3.4.4 Wheel encoders: position, direction and speed</h4>
+<p>A <strong>quadrature encoder</strong> has two output pulse trains <strong>A</strong> and <strong>B</strong>, offset by a quarter of a cycle. Going forward the pair of bits cycles <span class="math inline">00\to01\to11\to10</span>; backward, the reverse. Reading each <em>change</em> of the pair gives four counts per cycle (<strong>x4 decoding</strong>) and the <em>order</em> gives the direction, which a single pulse train cannot (Figure 5, left). The module’s <code>quadrature_decode</code> is a lookup table of legal transitions; the test drives the encoder forward 40 counts and back 25 and decodes +15 (and the figure’s sequence, 12 forward and 7 back, decodes +5 against the expected +5). An illegal jump (both bits change at once) means a missed transition and is counted as an error.</p>
+<p>Our assumed encoder gives 11 pulses per motor-shaft revolution, x4 decoding makes 44 counts, and a 1:30 gearbox makes <strong>1320 counts per wheel revolution</strong> (CPR). With a wheel radius of 33 mm one count is <span class="math inline">2\pi\times0.033/1320=0.157</span> mm of travel. At 0.5 m/s the wheel produces 3183 counts per second and the A channel runs at 796 Hz, which the microcontroller must catch with interrupts or a hardware counter (Unit 4). One missed count in a 20 m patrol would be an error of 0.0008 percent, so the encoder resolution is never the limit of odometry; wheel slip is (Unit 8).</p>
+<p>Speed is estimated by counting over a window <span class="math inline">T_s</span>: <span class="math inline">\hat v=\Delta N\cdot d/T_s</span>. The count <span class="math inline">\Delta N</span> is an integer, so the estimate moves in steps of <span class="math inline">d/T_s</span>. For <span class="math inline">T_s=10</span>, 50, 100 and 500 ms the step is 15.7, 3.14, 1.57 and 0.314 mm/s and the measured peak error at a true 0.5 m/s was 13.1, 2.7, 1.1 and 0.17 mm/s (Figure 5, right). A short window gives a fast but coarse estimate; a long window a fine but late one: the same trade as the filters, and the same trade a speed controller faces (Unit 9).</p>
+<figure>
+<img src="../assets/fig/u3/fig05_encoder.png" style="width:95.0%" alt="Left: encoder channels A (blue) and B (orange) for a wheel that turns forward 12 counts and back 7; the count (black) rises then falls and decodes to +5 with no illegal transitions. Right: speed estimated from counts over four window lengths at a true 0.5 m/s (assumed encoder, 0.157 mm per count): a 10 ms window jumps by \pm13 mm/s, a 500 ms window by \pm0.2 mm/s." />
+<figcaption aria-hidden="true">Left: encoder channels A (blue) and B (orange) for a wheel that turns forward 12 counts and back 7; the count (black) rises then falls and decodes to +5 with no illegal transitions. Right: speed estimated from counts over four window lengths at a true 0.5 m/s (assumed encoder, 0.157 mm per count): a 10 ms window jumps by <span class="math inline">\pm13</span> mm/s, a 500 ms window by <span class="math inline">\pm0.2</span> mm/s.</figcaption>
+</figure>
+<h4 id="actuators-servo-stepper-relay">3.4.5 Actuators: servo, stepper, relay</h4>
+<ul>
+<li><strong>DC motor</strong> (Unit 2): continuous rotation, speed set by average voltage (PWM), position known only through an encoder.</li>
+<li><strong>Hobby servo</strong>: a DC motor, a gearbox, a potentiometer and a control circuit in one box. It is commanded by a pulse of 1.0 to 2.0 ms repeated every 20 ms (assumed typical): 1.5 ms for the middle position, so 45 degrees is 1.25 ms. A timer ticking every microsecond has 1000 ticks across 180 degrees, 0.18 degree per tick. Position control is inside; a stalled servo draws current and heats.</li>
+<li><strong>Stepper motor</strong>: moves a fixed angle per pulse, 1.8 degrees (200 steps per revolution) for the common type, 0.1125 degree with 1/16 microstepping (800 microsteps for 90 degrees). It is open loop: if the load torque is too large it silently loses steps, and the controller does not know. Good for a printer axis; poor for a robot wheel that may jam.</li>
+<li><strong>Relay</strong>: an electromagnet that closes a mechanical contact; it isolates a high-voltage or high-current load from the logic, but its contacts wear (a limited number of switchings) and the coil is an inductor, so it needs the flyback diode of Unit 2.</li>
+</ul>
+<h4 id="drift-and-the-recalibration-interval">3.4.6 Drift and the recalibration interval</h4>
+<p>Capacitive soil sensors change with temperature, salinity and age. Suppose (assumed) the error grows by 0.15 percent VWC per day after calibration, starting from the 0.7 percent of a typical calibration; the node’s tolerance is 3 percent. The error stays under tolerance for <span class="math inline">(3.0-0.7)/0.15=15.3</span> days, so the sensor must be recalibrated at least every two weeks (Figure 6): recalibrating every 14 days gives a worst error of 2.65 percent, every 7 days 1.6 percent; never recalibrating gives 9.7 percent after 60 days, with 45 of the 60 days over tolerance.</p>
+<figure>
+<img src="../assets/fig/u3/fig06_drift.png" style="width:80.0%" alt="Worst-case soil-moisture error against days since the first calibration (assumed drift 0.15 percent VWC per day, calibration error 0.7 percent, tolerance 3 percent). Never recalibrating (red) crosses the tolerance on day 15.3 and reaches 9.7 percent at day 60; recalibrating every 14 days (orange) peaks at 2.65 percent; every 7 days (green) at 1.6 percent." />
+<figcaption aria-hidden="true">Worst-case soil-moisture error against days since the first calibration (assumed drift 0.15 percent VWC per day, calibration error 0.7 percent, tolerance 3 percent). Never recalibrating (red) crosses the tolerance on day 15.3 and reaches 9.7 percent at day 60; recalibrating every 14 days (orange) peaks at 2.65 percent; every 7 days (green) at 1.6 percent.</figcaption>
+</figure>
+<h3 id="tier-5-hardest-open-questions">3.5 Tier 5 (hardest): open questions</h3>
+<ol type="1">
+<li><strong>Is the noise really white?</strong> Averaging <span class="math inline">n</span> readings gives <span class="math inline">1/\sqrt n</span> only if the errors are independent. Sensors also have slow, correlated noise and drift for which averaging more gives <em>no</em> gain beyond some <span class="math inline">n</span>. How would you detect that from a long record of a constant input? (The Allan variance is the standard tool; it is named here, not taught.)</li>
+<li><strong>Outliers.</strong> One wild reading (a loose wire) ruins a moving average and an EMA. A <strong>median filter</strong> (the middle of the last <span class="math inline">n</span> readings) ignores it, but its noise gain for Gaussian noise is worse than the average. Design a two-stage scheme and decide what it costs in delay.</li>
+<li><strong>Combine two imperfect sensors.</strong> A gyroscope is smooth but drifts; an encoder is drift-free but steps. Can a filter use each where it is good? (This is sensor fusion, the topic of Unit 10.)</li>
+</ol>
+<h2 id="apply">4. Apply</h2>
+<h3 id="worked-problems">4.1 Worked problems</h3>
+<p><strong>Problem 1 (bias and averaging).</strong> A sensor with bias <span class="math inline">+0.4</span> and noise 0.3 reads a constant true value. What RMSE does a single reading have, and what does an average of 100 readings have?</p>
+<p><em>Solution.</em> Single: <span class="math inline">\sqrt{0.4^2+0.3^2}=0.5</span>. Average of 100: the noise falls to <span class="math inline">0.3/\sqrt{100}=0.03</span> but the bias stays: <span class="math inline">\sqrt{0.4^2+0.03^2}=0.401</span>. Averaging helped by 20% only.</p>
+<p><strong>Problem 2 (least squares by hand).</strong> Calibration points <span class="math inline">(x,y)=(1,2),(2,4),(3,5)</span>: find the line.</p>
+<p><em>Solution.</em> <span class="math inline">\bar x=2,\ \bar y=11/3</span>. <span class="math inline">S_{xx}=1+0+1=2</span>; <span class="math inline">S_{xy}=(1-2)(2-11/3)+0+(3-2)(5-11/3)=5/3+4/3=3</span>. So <span class="math inline">b=3/2</span> and <span class="math inline">a=11/3-3=2/3</span>. Check with <code>fit_line([1,2,3],[2,4,5])</code>.</p>
+<p><strong>Problem 3 (aliasing).</strong> A motor vibrates at 130 Hz and the node samples at 100 Hz. What frequency appears?</p>
+<p><em>Solution.</em> <span class="math inline">f_a=|130-100\cdot\mathrm{round}(1.3)|=|130-100|=30</span> Hz. To see a vibration at 130 Hz one must sample above 260 Hz, or filter it out before the ADC.</p>
+<p><strong>Problem 4 (filter design).</strong> A reading has noise 0.2 and is sampled at 10 Hz. You want noise 0.05 and a delay no more than 0.5 s. Choose an EMA.</p>
+<p><em>Solution.</em> The gain needed is <span class="math inline">0.05/0.2=0.25=1/\sqrt n</span>, so <span class="math inline">n=16</span> and <span class="math inline">\alpha=2/17=0.1176</span>. The mean delay is <span class="math inline">(16-1)/2=7.5</span> samples <span class="math inline">=0.75</span> s at 10 Hz: <strong>too long</strong>. Either accept noise 0.2/<span class="math inline">\sqrt{n}</span> with <span class="math inline">n=11</span> (delay 0.5 s, gain 0.30, noise 0.060) or sample faster (at 20 Hz the same <span class="math inline">n=16</span> costs 0.375 s).</p>
+<p><strong>Problem 5 (encoder).</strong> A wheel with 1320 counts per revolution and radius 33 mm advances 4000 counts. How far did it go?</p>
+<p><em>Solution.</em> <span class="math inline">4000\times0.1571</span> mm <span class="math inline">=628</span> mm (about 3.03 wheel turns).</p>
+<h3 id="code-and-figures">4.2 Code and figures</h3>
+<pre class="python"><code>import sensors_np as S
+import numpy as np
+
+fit = S.fit_line([1, 2, 3], [2, 4, 5])                 # a = 0.667, b = 1.5, with standard errors
+print(S.alias_frequency(130, 100))                     # 30.0
+a = S.alpha_matching_ma(19)                            # 0.1: EMA with the 19-point average&#39;s gain and delay
+y = S.ema(np.random.default_rng(0).normal(size=1000), a)
+print(S.ntc_temperature(S.ntc_resistance(37.0)))       # 37.0
+print(S.ultrasonic_distance(5.7728e-3, 25.0))          # 1.000 m</code></pre>
+<p>The module and its README are in <code>codes/sensors/sensors_np/</code>. Its eight tests check the bias-variance identity, the least-squares line (exact and equal to <code>numpy.polyfit</code>), the slope’s standard error against a 4000-run Monte Carlo (within 5%), the moving-average and EMA noise gains (within 2% and 1%), the exact equality of gain and delay at <span class="math inline">\alpha=2/(n+1)</span>, aliasing (including 9 Hz equal to a negated 1 Hz), the quadrature round trip, and the NTC, ultrasonic, servo and stepper helpers.</p>
+<p><em>What would look different if the theory were wrong?</em> If (4) were wrong, the Monte Carlo spread of the slope would not match 0.054; it is 0.0537. If (7) or (8) were wrong, the measured EMA gains and delays in Figure 4 would not fall on the moving-average points; they do.</p>
+<h2 id="analyze">5. Analyze</h2>
+<p><strong>Limits.</strong> As the number of averaged readings grows, noise falls as <span class="math inline">1/\sqrt n</span> and the error tends to the bias (and, in practice, to the slow correlated noise): no filter beats the calibration. As <span class="math inline">\alpha\to1</span> the EMA does no filtering (gain 1, delay 0); as <span class="math inline">\alpha\to0</span> the gain and the responsiveness both vanish. As <span class="math inline">f\to f_s/2</span> the aliasing formula folds back with no safety margin; real systems sample at 2.5 to 10 times the highest frequency of interest.</p>
+<p><strong>Dominance.</strong> In the soil node’s error budget at 25 percent VWC (Section 7): calibration residual 0.33 percent (quadratic fit), sensor noise 0.056 percent after the burst, ADC quantisation 0.0039 percent, drift 0.15 percent per day. After about two days drift (0.3 percent) already equals the calibration error. <strong>Drift, not noise or quantisation, dominates a deployed sensor.</strong> Adding ADC bits would be wasted effort.</p>
+<p><strong>Order-of-magnitude estimate.</strong> Mains interference of 50 mV on a 60 mV-per-percent sensor is about 0.8 percent peak: an effect far larger than the ADC’s 0.013 percent step; one can see this before simulating.</p>
+<p><strong>Sensitivity.</strong> The EMA’s mean delay is <span class="math inline">(1-\alpha)/\alpha</span>: halving <span class="math inline">\alpha</span> from 0.2 to 0.1 more than doubles the delay (4 to 9 samples). The slope uncertainty scales as <span class="math inline">1/\sqrt{S_{xx}}</span>: spreading calibration points to twice the range halves it.</p>
+<p><strong>Failure modes.</strong> (1) <em>Calibrating in the middle only</em>: the ends are extrapolated and wrong. (2) <em>Averaging a bias</em>: no gain. (3) <em>Sampling a fast signal slowly</em>: an alias that looks plausible. (4) <em>A long filter inside a control loop</em>: delay spoils the loop (Unit 1). (5) <em>Missed encoder counts</em> (interrupts blocked): permanent position error. (6) <em>Stepper overload</em>: silent lost steps. (7) <em>Thermistor self-heating</em> and <em>ultrasonic temperature error</em>: the sensor measures its own circuit or the wrong speed of sound.</p>
+<p><strong>Items used from the pedagogy checklist:</strong> limits, dominance, estimate, sensitivity, failure modes, residual structure (Figure 2 right), uncertainty (slope standard error), invariants (MSE identity, EMA-MA equivalence), constructed-versus-measured (the sensors are simulated).</p>
+<h2 id="evaluate">6. Evaluate</h2>
+<p><strong>Moving average versus EMA versus median.</strong> At equal noise reduction the moving average and EMA lag equally, but the EMA stores one number and the moving average <span class="math inline">n</span>; the moving average has a finite memory (a bad reading disappears after <span class="math inline">n</span> samples) while the EMA remembers it, with decaying weight, forever. A median filter resists outliers but gives less noise reduction on Gaussian noise. For an 8-bit microcontroller, the EMA with <span class="math inline">\alpha=2^{-k}</span> is one subtraction and a shift.</p>
+<p><strong>Linear versus polynomial calibration.</strong> The quadratic cut the error from 0.92 to 0.33 percent here because the curve is quadratic by construction. With real data, a higher-degree polynomial fits the calibration points better but can oscillate between them; judge a calibration on points not used to fit it (we judged on a dense test grid), and prefer the lowest degree that leaves a residual at the noise level.</p>
+<p><strong>Analog versus digital anti-alias filtering.</strong> An RC low-pass before the ADC removes frequencies above the Nyquist limit once and for all but cannot be changed in software; sampling fast and averaging digitally is flexible but costs energy (Unit 2: awake charge). The burst of Section 3.4.3 is a compromise: 20 ms awake per report.</p>
+<p><strong>Sensor choice.</strong> Resistive soil probes are cheap and corrode; capacitive ones last but need calibration and drift. A thermistor is cheap and sensitive but non-linear and self-heating; a digital temperature chip removes the analog design at a higher cost per part and a bus (Unit 4). No choice is best in general.</p>
+<p><strong>Context.</strong> The statistical idea behind calibration, least squares, is two centuries old and underlies most of data fitting; Kalman filtering (Unit 10) is its recursive, time-varying descendant. <strong>When NOT to use these methods:</strong> when the noise is not roughly independent (slow wander), when outliers dominate (use a median first), or when a single factory calibration is a legal requirement (do not silently re-calibrate a certified instrument).</p>
+<p><strong>Honesty about this Unit’s numbers.</strong> The simulated sensors test the algebra and the code, not any real device. The soil sensor curve, noise, drift, thermistor parameters, mains level, encoder and servo numbers are assumed. The identities (MSE decomposition, EMA and moving-average equivalence, aliasing) are exact and hold for any sensor.</p>
+<h2 id="create">7. Create</h2>
+<div class="create" title="What you can build from this">
+<ol type="1">
+<li><strong>Calibrate your own sensor.</strong> Take any sensor with a curved response (a thermistor, a light-dependent resistor), collect 8 points against a reference, fit degrees 1, 2 and 3, and judge them on held-out points.</li>
+<li><strong>An aliasing experiment.</strong> Generate a 130 Hz signal, sample it at 100, 200 and 300 Hz with <code>sample</code>, and predict the apparent frequency with <code>alias_frequency</code> before looking.</li>
+<li><strong>Design the filter for the encoder speed.</strong> Choose a window or an EMA for the rover’s wheel-speed estimate that gives under 5 mm/s of count noise and under 100 ms of delay; justify it from Section 3.4.4.</li>
+<li><strong>Median-then-EMA.</strong> Add a median-of-5 stage before the EMA, inject 1% outliers, and measure the error against the EMA alone.</li>
+<li><strong>Could become a package module:</strong> <code>iotrobotics.sensing</code> with <code>fit_line</code>, <code>fit_poly</code>, <code>moving_average</code>, <code>ema</code>, <code>alias_frequency</code>, <code>quadrature_decode</code>.</li>
+</ol>
+</div>
+<p><strong>Running project, Layer 2: the sensing chain.</strong> The soil node’s reading becomes: <em>burst-average 20 samples at 1 kHz (one whole mains period) <span class="math inline">\to</span> quadratic calibration from six reference points spread over 5 to 45 percent <span class="math inline">\to</span> report.</em> Error budget at 25 percent VWC (assumed sensor):</p>
+<table>
+<caption>the soil-moisture error budget. The first three terms combine (root-sum-square) to about 0.34 percent; drift is the long-term term.</caption>
+<colgroup>
+<col style="width: 30%" />
+<col style="width: 40%" />
+<col style="width: 30%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">term</th>
+<th style="text-align: right;">size (percent VWC)</th>
+<th style="text-align: left;">note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">calibration residual (quadratic, 6 points)</td>
+<td style="text-align: right;">0.33</td>
+<td style="text-align: left;">Section 3.3.2</td>
+</tr>
+<tr>
+<td style="text-align: left;">sensor noise after a 20-sample burst</td>
+<td style="text-align: right;">0.056</td>
+<td style="text-align: left;"><span class="math inline">0.015/\sqrt{20}/0.06</span></td>
+</tr>
+<tr>
+<td style="text-align: left;">ADC quantisation (12-bit, RMS)</td>
+<td style="text-align: right;">0.0039</td>
+<td style="text-align: left;"><span class="math inline">q/\sqrt{12}/0.06</span></td>
+</tr>
+<tr>
+<td style="text-align: left;">mains interference</td>
+<td style="text-align: right;"><span class="math inline">\approx0</span></td>
+<td style="text-align: left;">whole-period burst; 0.59 for one reading</td>
+</tr>
+<tr>
+<td style="text-align: left;">drift</td>
+<td style="text-align: right;">0.15 per day</td>
+<td style="text-align: left;">recalibrate within 15.3 days for a 3 percent tolerance</td>
+</tr>
+</tbody>
+</table>
+<p>The air temperature chain: NTC divider powered only during the reading, 0.022 K per ADC code, self-heating removed by duty-cycling the divider. The encoder chain: x4 decoding, 1320 counts per wheel revolution, 0.157 mm per count, a 100 ms window for speed (1.6 mm/s step). New or updated requirements:</p>
+<table>
+<caption>running-project requirements updated by Unit 3.</caption>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">id</th>
+<th style="text-align: left;">requirement</th>
+<th style="text-align: left;">status after Unit 3</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">R11 (new)</td>
+<td style="text-align: left;">soil moisture within 3 percent VWC at all times</td>
+<td style="text-align: left;">met with a recalibration at least every 15 days (assumed drift); noise and quantisation are negligible</td>
+</tr>
+<tr>
+<td style="text-align: left;">R12 (new)</td>
+<td style="text-align: left;">temperature within 0.5 K including self-heating</td>
+<td style="text-align: left;">met if the divider is powered only while reading (0.27 K otherwise, with the assumed dissipation constant)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R5</td>
+<td style="text-align: left;">position error after a 20 m patrol under 10 percent</td>
+<td style="text-align: left;">the encoder contributes under 0.001 percent; the limit is wheel slip (Unit 8)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R13 (new)</td>
+<td style="text-align: left;">wheel speed estimate to 2 mm/s at 0.5 m/s</td>
+<td style="text-align: left;">100 ms window gives a 1.6 mm/s step with a delay of at most 100 ms</td>
+</tr>
+</tbody>
+</table>
+<h2 id="visualization-lesson">8. Visualization lesson</h2>
+<table>
+<caption>the chart types of this Unit. Ladder: <em>remember</em> the names; <em>understand</em> what each shows; <em>apply</em> the call; <em>analyse</em> how it misleads; <em>evaluate</em> when a table is better (the calibration comparison of Section 3.3.2 is a table, because the reader wants three numbers); <em>create</em> a new one.</caption>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Chart type</th>
+<th style="text-align: left;">Best for</th>
+<th style="text-align: left;">How it misleads</th>
+<th style="text-align: left;">matplotlib call</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">overlaid filled histogram</td>
+<td style="text-align: left;">comparing the distributions of a few groups</td>
+<td style="text-align: left;">opaque bars hide each other; use transparency and common bins</td>
+<td style="text-align: left;"><code>ax.hist(x, bins, histtype="stepfilled", alpha=0.45)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">stacked bar of a decomposition</td>
+<td style="text-align: left;">splitting a total into additive parts (bias squared + variance)</td>
+<td style="text-align: left;">only the bottom segment shares a baseline</td>
+<td style="text-align: left;"><code>ax.bar(x, a)</code>, <code>ax.bar(x, b, bottom=a)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">residual plot (error against input)</td>
+<td style="text-align: left;">showing whether a fit leaves structure</td>
+<td style="text-align: left;">a flat band means a good fit; a bow means a missing term (Figure 2 right)</td>
+<td style="text-align: left;"><code>ax.plot(x, fit(x) - y)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">sampled signal with markers</td>
+<td style="text-align: left;">showing what the samples are, against the true curve</td>
+<td style="text-align: left;">joining sample points by lines suggests information between them that is not there</td>
+<td style="text-align: left;"><code>ax.plot(t, v, "o-")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">folding (triangle) plot</td>
+<td style="text-align: left;">alias frequency against true frequency</td>
+<td style="text-align: left;">a continuous line suggests a continuous measurement; it is a map</td>
+<td style="text-align: left;"><code>ax.plot(f, alias(f))</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">step-response overlay</td>
+<td style="text-align: left;">comparing filters on one input</td>
+<td style="text-align: left;">different noise seeds make unfair comparisons; use the same data</td>
+<td style="text-align: left;"><code>ax.plot(t, y1)</code>, <code>ax.plot(t, y2, "--")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">digital timing diagram</td>
+<td style="text-align: left;">logic signals against time (A and B)</td>
+<td style="text-align: left;">offsets stacked on one axis lose their absolute level; label the rows</td>
+<td style="text-align: left;"><code>ax.step(k, a + 2.4, where="post")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">sawtooth against a limit</td>
+<td style="text-align: left;">a quantity that grows and is reset (drift and recalibration)</td>
+<td style="text-align: left;">the line implies the error is known each day; it is a bound</td>
+<td style="text-align: left;"><code>ax.plot(days, err)</code>, <code>ax.axhline(tol)</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading Figure 2 (right) as a chart.</strong> A residual plot makes a fit’s structure visible: the two bowed curves say that a straight line cannot follow the data, whatever its RMSE. A single RMSE number would have hidden the shape.</p>
+<h2 id="problem-set">9. Problem set</h2>
+<div class="exercise" title="Graded exercises">
+<ol type="1">
+<li>(easy) A thermometer reads 21.7, 21.9, 21.8, 21.6 and 21.8 for a true 21.0. Find its bias, noise (population std) and RMSE, and check that RMSE<span class="math inline">^2</span> = bias<span class="math inline">^2</span> + std<span class="math inline">^2</span>.</li>
+<li>(medium) Fit a line by hand to <span class="math inline">(0,0.1),(1,2.2),(2,3.9),(3,6.1)</span> and give the slope’s standard error from (4) using the residual standard deviation with <span class="math inline">n-2=2</span> degrees of freedom.</li>
+<li>(medium-hard) A vibration at 175 Hz is sampled at 400 Hz, at 200 Hz and at 150 Hz. State the apparent frequency in each case, and say which sampling rates are safe.</li>
+<li>(hard) Show that the EMA step response is <span class="math inline">1-(1-\alpha)^{k+1}</span> after a unit step at sample 0 (starting from <span class="math inline">y=0</span>). Find the number of samples to reach 90% for <span class="math inline">\alpha=0.1</span> and compare with the 19-point moving average’s step response (which reaches 90% after how many samples?).</li>
+<li>(hardest) A 12-bit ADC reads a sensor with a mains hum of 0.05 V at 50 Hz. Design a burst (number of samples and rate) that removes the hum to under 0.1% of its amplitude even if the clock is off by 1%. (Hint: the residual of averaging <span class="math inline">N</span> samples over a window that is <span class="math inline">(1+\epsilon)</span> periods long.)</li>
+</ol>
+</div>
+<h2 id="retrieval-practice-and-recap">10. Retrieval practice and recap</h2>
+<p><strong>Answers to the Section 2 predictions.</strong></p>
+<ol type="1">
+<li>About 1.5 <span class="math inline">^\circ</span>C: the bias remains; only the 0.1 <span class="math inline">^\circ</span>C scatter is averaged away.</li>
+<li>1 Hz.</li>
+<li>Neither: they have the same delay (9 samples) and the same noise gain; the moving average reached 90% in 0.17 s and the EMA in 0.18 s.</li>
+</ol>
+<p><strong>Answers to the Section 2 recall quiz.</strong></p>
+<ol type="1">
+<li>Accuracy is closeness of the average to the truth (bias); precision is the repeatability (scatter).</li>
+<li>Averaging only reduces independent scatter; a bias is the same in every reading.</li>
+<li>Half the sampling rate, <span class="math inline">f_s/2</span> (the Nyquist frequency).</li>
+<li>The direction of motion (and, with x4 decoding, four times the resolution).</li>
+<li>Power the divider only while reading, or use a larger series resistor, so that less power heats the thermistor.</li>
+</ol>
+<p><strong>Explain it to a friend.</strong></p>
+<ul>
+<li>Why can a very precise sensor still give the wrong answer?</li>
+<li>Why does a signal sampled too slowly look like a slower signal instead of just looking bad?</li>
+<li>Why is an exponential filter a good choice for a small microcontroller?</li>
+</ul>
+<p><strong>Re-derive by hand tomorrow, without looking:</strong> (a) the least-squares slope <span class="math inline">S_{xy}/S_{xx}</span>; (b) the EMA noise gain <span class="math inline">\sqrt{\alpha/(2-\alpha)}</span> and mean delay <span class="math inline">(1-\alpha)/\alpha</span>; (c) the alias frequency of 130 Hz sampled at 100 Hz.</p>
+<h2 id="where-next">11. Where next</h2>
+<ul>
+<li><strong>Unit 4</strong> puts the sensors on a microcontroller: GPIO pins, interrupts (for the 796 Hz encoder channel), timers, buses (I2C, SPI, UART) and the state machine that runs the node, with deep sleep (which must make the 0.5 s Wi-Fi connect of Unit 2 believable).</li>
+<li>Terms named here but not taught: IMU fusion (Unit 10), odometry (Unit 8), median filter (named), Allan variance (named). They are registered in CURRICULUM.md.</li>
+<li><strong>Open threads:</strong> all sensor curves, noise, drift and part parameters are assumed; real-sensor calibration not done; the dissipation constant of the thermistor is assumed.</li>
+</ul>
+<p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u2.html">&larr; Electronics</a><a class="btn" href="u4.html">Microcontrollers &rarr;</a></p></article></div></main>
+<footer><div class="wrap">Internet of Things and Robotics crash course · Code is MIT-licensed; PDFs are for study use. Companion to the <a href="../../index.html">Generative AI and LLMs course</a>.</div></footer>
+<script>
+document.getElementById('theme').onclick=function(){var d=document.documentElement,c=d.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'),n=c==='dark'?'light':'dark';d.dataset.theme=n;try{localStorage.setItem('theme',n)}catch(e){}};
+</script>
+<script src="../../assets/vendor/katex/katex.min.js"></script><script>document.querySelectorAll(".math").forEach(function(n){var d=n.classList.contains("display");var t=n.textContent.replace(/^\\[\(\[]|\\[\)\]]$/g,"");try{katex.render(t,n,{displayMode:d,throwOnError:false})}catch(e){}});</script></body></html>

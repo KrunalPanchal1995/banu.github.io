@@ -1,0 +1,711 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unit 7: IoT Security and Privacy: Threats, Keys, Signatures, Least Privilege · IoT and Robotics</title>
+<meta name="description" content="From volts and sensors to MQTT, security, kinematics, control, localisation and navigation, built around one running project: a Smart Greenhouse Rover. Twelve units with a PDF and runnable code each, a 14-lab track and an assessment bank. Built for a B.Tech student; simulation-first, no hardware needed.">
+<link rel="stylesheet" href="../../assets/css/style.css"><link rel="stylesheet" href="../assets/css/iot.css">
+<script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="stylesheet" href="../../assets/vendor/katex/katex.min.css"></head><body>
+<header class="site-head"><div class="wrap">
+<a class="brand" href="../index.html">IoT <span>&amp;</span> Robotics<span class="long"> crash course</span></a>
+<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
+</div></header>
+<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 7</strong><a href="#session-map">Session map</a><a href="#terms-the-term-tree">1. Terms: the term tree</a><a href="#remember">2. Remember</a><a href="#understand-the-derivation">3. Understand: the derivation</a><a href="#apply">4. Apply</a><a href="#analyze">5. Analyze</a><a href="#evaluate">6. Evaluate</a><a href="#create">7. Create</a><a href="#visualization-lesson">8. Visualization lesson</a><a href="#problem-set">9. Problem set</a><a href="#retrieval-practice-and-recap">10. Retrieval practice and recap</a><a href="#where-next">11. Where next</a></aside><article class="doc"><p><span class="chip">Unit 7</span> <span class="chip ">ready</span></p><h1>IoT Security and Privacy: Threats, Keys, Signatures, Least Privilege</h1><p class="lede">STRIDE, the Mirai botnet, authenticated commands, TLS cost, signed updates, ACLs and privacy.</p><div class="dl"><a class="btn primary" href="../downloads/u7/u7-notes.pdf" download>PDF notes<small>923 KB</small></a><a class="btn" href="../downloads/u7/u7-notes.docx" download>Word (.docx)<small>738 KB</small></a><a class="btn" href="../downloads/u7/u7-code.zip" download>All code (.zip)<small>47 KB</small></a></div><h2 id="session-map">Session map</h2>
+<div class="keyidea" title="Outcome of this session">
+<p>After this session you can:</p>
+<ol type="1">
+<li>draw a threat model of the greenhouse (assets, flows, trust boundaries) and list its threats with STRIDE;</li>
+<li>explain how the Mirai botnet grew from default passwords, and compute how long a password of a given entropy resists a given guessing rate;</li>
+<li>build an authenticated command (per-device key, counter, truncated HMAC tag), say what each field defeats, and show by experiment that forged, tampered and replayed commands are refused;</li>
+<li>measure what TLS costs a node that reconnects at every wake-up, and choose between TLS and a message-level MAC;</li>
+<li>verify a signed over-the-air update (signature, version, length, hash), restrict an MQTT client to its own topics with an ACL, and say what aggregation does and does not hide about a household.</li>
+</ol>
+</div>
+<ul>
+<li><strong>Prerequisites:</strong> Unit 5 (MQTT, our broker and client), Unit 6 (aggregation), Unit 4 (deep sleep). Probability and powers of two. No cryptography background: each primitive is defined where it is used.</li>
+<li><strong>Difficulty ladder used:</strong> easy → medium → medium-hard → hard (Sections 3.1 to 3.4); the hardest tier is posed as open questions in Section 3.5.</li>
+<li><strong>Deliverables:</strong> this document (.tex, .pdf, .docx), 6 figures, the module <code>codes/security/iot_sec/</code> (<code>iot_sec.py</code>: password arithmetic, per-device keys, HMAC commands with replay protection, Ed25519 OTA manifests, topic ACLs; <code>tls_cost.py</code>: an in-memory TLS handshake meter; 6 tests plus the extended broker tests), <code>analysis_log.txt</code> and <code>privacy_log.txt</code> (the measured numbers), and authentication and ACL hooks added to the Unit 5 broker.</li>
+<li><strong>Source anchors:</strong> Antonakakis et al., <em>Understanding the Mirai Botnet</em>, USENIX Security 2017, <strong>full text read on 2026-10-11</strong>: the initial attack on Krebs on Security exceeded 600 Gbps (Introduction, PDF p. 2); the scanner probed Telnet TCP ports 23 and 2323 and tried 10 username/password pairs chosen randomly from a list of 62 credentials (Section 2, PDF p. 3); the earlier BASHLITE used 6 usernames and 14 passwords against Mirai’s 62 pairs (PDF p. 4); infections were 200,000 to 300,000 in September 2016, peaked at 600,000 at the end of November 2016 and fell to about 100,000 by late February 2017 (Section 4.2, PDF p. 7). All other facts are derived in the text or <strong>measured by the module</strong> (HMAC experiments, Ed25519 sizes, TLS handshake bytes with OpenSSL 3.4.0 and <code>cryptography</code> 42.0.5). The Zipf popularity of default credentials, appliance powers, threat scores and all attacker guessing rates are <strong>assumed</strong>; the TLS numbers are for a single small self-signed certificate (real chains are larger) and say nothing of the time a microcontroller needs for the cryptography.</li>
+</ul>
+<h2 id="terms-the-term-tree">1. Terms: the term tree</h2>
+<table>
+<colgroup>
+<col style="width: 22%" />
+<col style="width: 14%" />
+<col style="width: 37%" />
+<col style="width: 13%" />
+<col style="width: 10%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Term</th>
+<th style="text-align: center;">Symbol</th>
+<th style="text-align: left;">One-line meaning</th>
+<th style="text-align: center;">Where it appears</th>
+<th style="text-align: center;">New / known</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">asset, threat, vulnerability</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">what is worth protecting; what could go wrong; the weakness that allows it</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">attack surface</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">every place an attacker can touch the system (ports, radios, update path, physical access)</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">risk</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">likelihood of a threat times its impact</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">confidentiality, integrity, availability</td>
+<td style="text-align: center;">CIA</td>
+<td style="text-align: left;">keep data secret; keep it unaltered; keep the service usable</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">STRIDE</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">six threat classes: spoofing, tampering, repudiation, information disclosure, denial of service, elevation of privilege</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">authentication and authorisation</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">proving who you are; deciding what you may do</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">entropy (of a secret)</td>
+<td style="text-align: center;"><span class="math inline">H</span></td>
+<td style="text-align: left;">bits of uncertainty: <span class="math inline">\log_2</span> of the number of equally likely choices</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">dictionary attack</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">trying a list of likely secrets instead of all of them</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">botnet</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">many compromised devices controlled by one attacker</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">hash function</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a function that maps data of any length to a fixed-length fingerprint (SHA-256: 32 bytes)</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">MAC and HMAC</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a short tag computed from a secret key and a message; only key holders can compute or check it</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">replay attack and counter</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">re-sending a genuine old message; a number that must increase with every message</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">key derivation (per-device key)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">computing each device’s key from a master key and its identity</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">TLS and certificate</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">an encrypted, authenticated channel; a signed statement binding a name to a public key</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">session resumption</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">reusing the secrets of an earlier TLS session to shorten the next handshake</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">digital signature (Ed25519)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a value that anyone with the public key can verify but only the private-key holder can create</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">secure boot and OTA update</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">running only signed code; updating firmware over the air</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">rollback attack</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">forcing a device back to an older, vulnerable version</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">ACL and least privilege</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a list of what each client may publish and subscribe; granting only what is needed</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">network segmentation</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">splitting a network so that one breach does not reach everything</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">privacy and data minimisation</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">protecting information about people; collecting and keeping no more than needed</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+</tbody>
+</table>
+<p>Terms <em>used but not taught here</em>: public-key cryptography beyond signatures (named only), certificate authorities and revocation (named only), differential privacy (named only), hardware security elements (named only), legal frameworks such as data-protection law (named only).</p>
+<h2 id="remember">2. Remember</h2>
+<div class="definition" title="What we protect, and from what">
+<p>An <strong>asset</strong> is what is worth protecting (the rover’s motors, the readings, the watering schedule, the firmware, the residents’ privacy). A <strong>threat</strong> is something that could go wrong; a <strong>vulnerability</strong> is the weakness that lets it. Security aims at three properties, the <strong>CIA triad</strong>: <strong>confidentiality</strong> (only the right parties can read it), <strong>integrity</strong> (it cannot be altered unnoticed) and <strong>availability</strong> (it works when needed). Two actions underlie them: <strong>authentication</strong> (proving who you are) and <strong>authorisation</strong> (deciding what you may do).</p>
+</div>
+<div class="definition" title="Why IoT is a special case">
+<p>An IoT device is often cheap, built once, installed for years, rarely updated, reachable from the internet, unobserved, physically accessible, and short of power and memory for cryptography. Each of these makes an attack easier or a defence harder. The Mirai botnet (Section 3.3.1) is what that looks like at scale.</p>
+</div>
+<p><strong>Memory hooks.</strong></p>
+<ul>
+<li><em>Never trust, always verify:</em> a message is believed because of a key, not because of where it came from.</li>
+<li><em>A secret that is the same on a million devices is not a secret.</em></li>
+<li><em>A tag proves who and what; a counter proves when; a signature proves who to everyone.</em></li>
+<li><em>Give each part exactly the access it needs and nothing more.</em></li>
+<li><em>Aggregation hides what, not whether.</em></li>
+</ul>
+<p><strong>Before you read on: three predictions</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>Mirai tried a list of default Telnet logins. About how many username/password pairs did its dictionary hold: 6, 62 or 6000?</li>
+<li>An 8-byte (64-bit) message tag is attached to a command. If an attacker could try 100 forged commands per second, about how long to expect before one is accepted: a day, a year or billions of years?</li>
+<li>A node reconnects with TLS at every wake-up. By about how much does one TLS 1.3 handshake increase the bytes of the 540-byte plain MQTT exchange of Unit 5: 10%, a factor of 2 to 4, or a factor of 100?</li>
+</ol>
+<p><strong>Recall quiz</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>Name the three properties of the CIA triad.</li>
+<li>What does a counter in a command protect against that a MAC alone does not?</li>
+<li>Why can an HMAC key not be used to sign firmware for many devices?</li>
+<li>What does an ACL deny to a compromised soil node?</li>
+<li>What does aggregating readings protect, and what does it not protect?</li>
+</ol>
+<h2 id="understand-the-derivation">3. Understand: the derivation</h2>
+<h3 id="tier-1-easy-intuition-and-a-picture">3.1 Tier 1 (easy): intuition and a picture</h3>
+<p>Who could do what to the greenhouse? A neighbour on the Wi-Fi could read the readings. A stranger who finds the node’s default password could take it over. Someone could send the rover a forged “go to plant 7” command, or an old genuine one again. A fake update could replace the firmware. The attacker could simply flood the broker so that nothing arrives. Each of these is a place where the system can be touched, its <strong>attack surface</strong>: the Wi-Fi, the broker’s port, the update path, the nodes themselves.</p>
+<p>A <strong>threat model</strong> draws this explicitly. Figure 1 is a data-flow diagram of our system: the parts (soil node, rover, broker, dashboard, operator phone, update server), the flows between them (readings, commands, firmware) and the <strong>trust boundaries</strong> (dashed): the greenhouse where an intruder could touch a device, the local network and broker, and the office and internet. Each arrow carries the <strong>STRIDE</strong> letters of the threats that apply to it (Section 3.2). Threats cluster at the boundaries, because data crossing a boundary can be forged, read or blocked by whoever is on the other side.</p>
+<figure>
+<img src="../assets/fig/u7/fig01_stride.png" style="width:92.0%" alt="Data-flow diagram of the greenhouse with trust boundaries (dashed) and, on each flow, the STRIDE threats that apply: S spoofing, T tampering, R repudiation, I information disclosure, D denial of service, E elevation of privilege. Readings, commands and firmware all cross a boundary." />
+<figcaption aria-hidden="true">Data-flow diagram of the greenhouse with trust boundaries (dashed) and, on each flow, the STRIDE threats that apply: S spoofing, T tampering, R repudiation, I information disclosure, D denial of service, E elevation of privilege. Readings, commands and firmware all cross a boundary.</figcaption>
+</figure>
+<h3 id="tier-2-medium-the-definitions-made-precise">3.2 Tier 2 (medium): the definitions made precise</h3>
+<h4 id="stride">3.2.1 STRIDE</h4>
+<p><strong>STRIDE</strong> is a mnemonic for six classes of threat, each the violation of a property:</p>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">threat</th>
+<th style="text-align: left;">the attacker…</th>
+<th style="text-align: left;">property violated</th>
+<th style="text-align: left;">typical defence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>S</strong>poofing</td>
+<td style="text-align: left;">pretends to be someone else (a node, the operator)</td>
+<td style="text-align: left;">authentication</td>
+<td style="text-align: left;">per-device keys, passwords, certificates</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>T</strong>ampering</td>
+<td style="text-align: left;">changes data in flight or at rest (a reading, a command, firmware)</td>
+<td style="text-align: left;">integrity</td>
+<td style="text-align: left;">MAC, signature, TLS</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>R</strong>epudiation</td>
+<td style="text-align: left;">later denies having done something, or no record exists</td>
+<td style="text-align: left;">accountability</td>
+<td style="text-align: left;">logs, signed commands</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>I</strong>nformation disclosure</td>
+<td style="text-align: left;">reads what they should not (readings, credentials)</td>
+<td style="text-align: left;">confidentiality</td>
+<td style="text-align: left;">encryption, ACL, aggregation</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>D</strong>enial of service</td>
+<td style="text-align: left;">makes the system unavailable (flooding, jamming, draining a battery)</td>
+<td style="text-align: left;">availability</td>
+<td style="text-align: left;">rate limits, redundancy, local fallback</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>E</strong>levation of privilege</td>
+<td style="text-align: left;">gains more rights than granted (a node commanding the rover)</td>
+<td style="text-align: left;">authorisation</td>
+<td style="text-align: left;">least privilege, ACL, separation</td>
+</tr>
+</tbody>
+</table>
+<h4 id="risk">3.2.2 Risk</h4>
+<p><strong>Risk</strong> is estimated as likelihood times impact. A common practice scores each from 1 to 5 and ranks by the product. For the greenhouse (judgements, not measurements): default credentials on the nodes, likelihood 4 and impact 3, score 12; a forged rover command, likelihood 3, impact 5, score 15 (a moving machine can hurt); an unsigned firmware update, likelihood 2, impact 5, score 10; eavesdropping on soil readings, likelihood 4, impact 1, score 4; flooding the broker, likelihood 3, impact 3, score 9; a stolen node, likelihood 2, impact 2, score 4. The ranking says what to fix first: <strong>authenticate rover commands</strong>, then remove default credentials, then sign updates. Encrypting soil readings comes last, because the readings are not sensitive.</p>
+<h3 id="tier-3-medium-hard-the-main-derivations">3.3 Tier 3 (medium-hard): the main derivations</h3>
+<h4 id="passwords-entropy-and-the-mirai-botnet">3.3.1 Passwords, entropy and the Mirai botnet</h4>
+<p>The <strong>entropy</strong> of a secret chosen uniformly from <span class="math inline">N</span> possibilities is <span class="math inline">H=\log_2N</span> bits; a password of <span class="math inline">\ell</span> symbols from an alphabet of <span class="math inline">a</span> symbols has <span class="math inline">H=\ell\log_2a</span>. An attacker who tries guesses at random finds it, on average, after half of the possibilities: <span class="math display"> \text{expected guesses}=2^{H-1},\qquad \text{expected time}=\frac{2^{H-1}}{r}\ \ (r\ \text{guesses per second}). \tag{1}</span></p>
+<table>
+<caption>entropy and expected search time (the rates are assumed; online guessing against a device is limited by the device and the network, offline guessing against a stolen hash by the attacker’s hardware). Each added character of a 62-symbol alphabet adds 5.95 bits, a factor of 62.</caption>
+<colgroup>
+<col style="width: 13%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">secret</th>
+<th style="text-align: right;">entropy (bits)</th>
+<th style="text-align: right;">expected guesses</th>
+<th style="text-align: right;">time at <span class="math inline">10^3</span>/s</th>
+<th style="text-align: right;">at <span class="math inline">10^6</span>/s</th>
+<th style="text-align: right;">at <span class="math inline">10^9</span>/s</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">one of Mirai’s 62 pairs</td>
+<td style="text-align: right;">5.95</td>
+<td style="text-align: right;">31</td>
+<td style="text-align: right;">0.03 s</td>
+<td style="text-align: right;">31 <span class="math inline">\mu</span>s</td>
+<td style="text-align: right;">31 ns</td>
+</tr>
+<tr>
+<td style="text-align: left;">4-digit PIN</td>
+<td style="text-align: right;">13.29</td>
+<td style="text-align: right;">5,000</td>
+<td style="text-align: right;">5 s</td>
+<td style="text-align: right;">5 ms</td>
+<td style="text-align: right;">5 <span class="math inline">\mu</span>s</td>
+</tr>
+<tr>
+<td style="text-align: left;">8 lowercase letters</td>
+<td style="text-align: right;">37.60</td>
+<td style="text-align: right;"><span class="math inline">1.0\times10^{11}</span></td>
+<td style="text-align: right;">3.3 years</td>
+<td style="text-align: right;">29 hours</td>
+<td style="text-align: right;">104 s</td>
+</tr>
+<tr>
+<td style="text-align: left;">8 mixed letters and digits</td>
+<td style="text-align: right;">47.63</td>
+<td style="text-align: right;"><span class="math inline">1.1\times10^{14}</span></td>
+<td style="text-align: right;">3,500 years</td>
+<td style="text-align: right;">3.5 years</td>
+<td style="text-align: right;">30 hours</td>
+</tr>
+<tr>
+<td style="text-align: left;">12 random letters and digits</td>
+<td style="text-align: right;">71.45</td>
+<td style="text-align: right;"><span class="math inline">1.6\times10^{21}</span></td>
+<td style="text-align: right;"><span class="math inline">5\times10^{10}</span> years</td>
+<td style="text-align: right;"><span class="math inline">5\times10^{7}</span> years</td>
+<td style="text-align: right;">51,000 years</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Mirai</strong>, the botnet of late 2016, needed none of this. The paper’s analysis of the released source shows how it grew. It scanned the internet with stateless TCP SYN probes to pseudorandom IPv4 addresses on Telnet ports 23 and 2323; at a host that answered, it tried <strong>10 username and password pairs chosen randomly from a list of 62 credentials</strong> (Section 2 of the paper); at the first success it reported the victim and its credentials, and a separate loader installed the malware. Its predecessor BASHLITE had used 6 usernames and 14 passwords; Mirai’s 62 pairs “largely subsumed” them and added credentials of routers and IoT devices. Infections held at 200,000 to 300,000 in September 2016, peaked at <strong>600,000</strong> at the end of November 2016 and fell to about 100,000 by late February 2017; the first attack on Krebs on Security exceeded <strong>600 Gbps</strong>. The devices were among “the Internet’s least powerful hosts”: cameras, routers, recorders, whose owners never changed a factory password.</p>
+<p><em>How much of the vulnerable population does a short dictionary cover?</em> Suppose the factory credentials of devices are not equally likely but follow a Zipf law (the <span class="math inline">r</span>-th most common credential has probability proportional to <span class="math inline">1/r</span>) over 200 possible defaults (<strong>an assumed popularity model</strong>). The dictionary of the <span class="math inline">D</span> most popular credentials covers a fraction <span class="math inline">\sum_{r\le D}1/r\big/\sum_{r\le200}1/r</span>: 17% of the vulnerable devices for <span class="math inline">D=1</span>, 39% for 5, 50% for 10, 61% for 20, <strong>80% for <span class="math inline">D=62</span></strong>, 88% for 100 and all for 200 (Figure 2, right). A scan that tries 10 of the 62 pairs per login succeeds on a device with a dictionary credential with probability <span class="math inline">10/62=16\%</span> per visit, i.e. after about 6 visits on average. <strong>A tiny list, tried patiently, breaks most of a population that has defaults at all.</strong> Against a device with a unique random password of 12 characters (71 bits) the same list covers 0% and brute force costs tens of thousands of years even at <span class="math inline">10^9</span> guesses per second.</p>
+<figure>
+<img src="../assets/fig/u7/fig02_passwords.png" style="width:95.0%" alt="Left: entropy in bits of five secrets with the expected search time at an assumed 10^9 guesses per second: Mirai’s choice of one of 62 default pairs takes nanoseconds, a 4-digit PIN microseconds, 8 lowercase letters 104 s, 8 mixed characters 30 hours, 12 random characters 51,000 years. Right: share of default-credential devices covered by a dictionary of the D most popular defaults (assumed Zipf popularity over 200): 62 pairs cover 80%; a unique random password per device is at 0%." />
+<figcaption aria-hidden="true">Left: entropy in bits of five secrets with the expected search time at an assumed <span class="math inline">10^9</span> guesses per second: Mirai’s choice of one of 62 default pairs takes nanoseconds, a 4-digit PIN microseconds, 8 lowercase letters 104 s, 8 mixed characters 30 hours, 12 random characters 51,000 years. Right: share of default-credential devices covered by a dictionary of the <span class="math inline">D</span> most popular defaults (assumed Zipf popularity over 200): 62 pairs cover 80%; a unique random password per device is at 0%.</figcaption>
+</figure>
+<p><strong>The lesson is a design rule, not a number:</strong> <em>no shared default secrets.</em> Every device gets its own random credential or key at manufacture or first use, and cannot be used until it is set.</p>
+<h4 id="hashes-and-hmac">3.3.2 Hashes and HMAC</h4>
+<p>A <strong>hash function</strong> such as SHA-256 maps any input to a 32-byte fingerprint; it is easy to compute, but infeasible to invert or to find two inputs with the same output. A hash alone does not authenticate: an attacker can hash a forged message. A <strong>message authentication code (MAC)</strong> mixes in a secret key. <strong>HMAC</strong> builds one from a hash: <span class="math inline">\mathrm{HMAC}(K,m)=H\big((K\oplus\text{opad})\,\|\,H((K\oplus\text{ipad})\,\|\,m)\big)</span> with two fixed padding constants (we use Python’s standard implementation, <code>hmac</code> with SHA-256). Only a holder of the key <span class="math inline">K</span> can compute the tag of a message, and the receiver can check it. A tag may be <strong>truncated</strong> to its first <span class="math inline">t</span> bytes to save space.</p>
+<h4 id="an-authenticated-command">3.3.3 An authenticated command</h4>
+<p>The envelope of the module’s <code>sign_command</code> is: a 4-byte <strong>counter</strong>, the command bytes, and a truncated HMAC-SHA256 tag over the counter and the command (default <span class="math inline">t=8</span> bytes). With a command <code>goto plant7</code> (11 bytes), the envelope is 23 bytes: <strong>12 bytes of overhead</strong>. Each field has a job:</p>
+<ul>
+<li><strong>The tag</strong> defeats <em>tampering</em> and <em>spoofing</em>: changing a bit of the counter or command, or forging a message without the key, makes the tag fail. A forger who guesses a <span class="math inline">t</span>-byte tag succeeds with probability <span class="math inline">2^{-8t}</span> per attempt. For <span class="math inline">t=8</span> this is <span class="math inline">5.4\times10^{-20}</span>, an expected <span class="math inline">1.8\times10^{19}</span> attempts: at 100 per second, <span class="math inline">5.8\times10^{9}</span> years. Prediction 2 of Section 2: <strong>billions of years</strong> (for comparison, the universe is about <span class="math inline">1.4\times10^{10}</span> years old: no attacker will get there). With a 4-byte tag the expected attempts are <span class="math inline">4.3\times10^{9}</span>: 1.4 years at 100 per second, which is not safe against an attacker who can send faster or who has time; with 2 bytes, 7.6 minutes (<span class="math inline">6.6\times10^4</span> attempts). Rate-limiting by the receiver multiplies these times, but a long tag does not need it.</li>
+<li><strong>The counter</strong> defeats <em>replay</em>: a genuine old envelope has a valid tag but a counter that is not greater than the last accepted one. The receiver keeps the last counter and accepts only a larger one.</li>
+<li><strong>The per-device key</strong> limits <em>the damage of one compromise</em>: the key of device <span class="math inline">i</span> is <span class="math inline">K_i=\mathrm{HMAC}(K_{\text{master}},\text{&quot;device-key|&quot;}\,\|\,\text{id}_i)</span>, so a stolen <span class="math inline">K_i</span> reveals neither the master key nor any other <span class="math inline">K_j</span>, and a command signed for the rover is refused by a node with a different key (it was run: wrong key gives “bad tag”).</li>
+</ul>
+<p>We ran the attacks (Figure 3, left; the script prints each outcome). 100,000 random byte strings of envelope length were all refused (expected number accepted: <span class="math inline">100{,}000\times2^{-64}=5\times10^{-15}</span>). All 184 single-bit flips of the 23-byte envelope were refused. The genuine envelope with counter 10 is accepted when the last counter is 9; the <em>same</em> envelope sent again is refused as a replay; an envelope for another device, one with the command text edited but the tag kept, one with a tag one byte short, and one with a valid tag but an old counter (5) were refused, the last as a replay. The comparison of tags uses a <strong>constant-time</strong> function (<code>hmac.compare_digest</code>), so the time taken does not reveal how many leading bytes were right.</p>
+<figure>
+<img src="../assets/fig/u7/fig03_hmac.png" style="width:95.0%" alt="Left: eight attacks on the 23-byte HMAC command envelope, all run for real: the genuine command is accepted; 100,000 random envelopes (0 accepted), a flipped bit, an edited command, a replay, another device’s key, a shortened tag and an old counter are all refused (bad tag or replay). Right: forgery probability per guess (blue) and envelope overhead (orange) against tag length: 8 bytes costs 12 bytes of overhead (4 counter + 8 tag) and gives 5\times10^{-20}." />
+<figcaption aria-hidden="true">Left: eight attacks on the 23-byte HMAC command envelope, all run for real: the genuine command is accepted; 100,000 random envelopes (0 accepted), a flipped bit, an edited command, a replay, another device’s key, a shortened tag and an old counter are all refused (bad tag or replay). Right: forgery probability per guess (blue) and envelope overhead (orange) against tag length: 8 bytes costs 12 bytes of overhead (4 counter + 8 tag) and gives <span class="math inline">5\times10^{-20}</span>.</figcaption>
+</figure>
+<p><em>What the scheme does not give.</em> It does not encrypt: the command is readable. It protects only if the counter is <strong>persistent</strong>: a sender that forgets its counter after a restart is refused until it catches up, and a receiver that forgets its last counter would accept replays; counters live in non-volatile memory (Unit 4: memory that survives deep sleep). And a <strong>shared</strong> key means that anyone holding the rover’s key can also forge commands <em>to</em> the rover, which is why a signature (Section 3.4.2) is used when the verifier must not be able to sign.</p>
+<h3 id="tier-4-hard-tls-signed-updates-least-privilege-privacy">3.4 Tier 4 (hard): TLS, signed updates, least privilege, privacy</h3>
+<h4 id="tls-what-it-buys-and-what-it-costs">3.4.1 TLS: what it buys and what it costs</h4>
+<p><strong>TLS</strong> (Transport Layer Security) wraps a TCP connection in an encrypted, authenticated channel: the server proves its identity with a <strong>certificate</strong> (a signed statement binding a name to a public key), client and server agree on session keys, and everything after the handshake is encrypted and integrity-protected. It gives confidentiality, integrity and server authentication for a whole connection; it is the standard for HTTP and MQTT over the internet. For a sleeping node it has a price, which we measured with OpenSSL 3.4.0 running both ends in memory (<code>tls_cost.py</code>: a client and a server exchanging the handshake bytes through <code>ssl.MemoryBIO</code>, counting every byte; a self-signed certificate for <code>localhost</code>; one 31-byte application record each way).</p>
+<table>
+<caption>measured TLS handshake costs (one run; ECDSA signatures vary by a byte or two in length, so counts differ by about 1 between runs). Each encrypted application record adds 22 bytes in TLS 1.3 and 29 in TLS 1.2. The 1,094 bytes of a resumed TLS 1.3 handshake include fresh session tickets for the next resumption.</caption>
+<colgroup>
+<col style="width: 15%" />
+<col style="width: 21%" />
+<col style="width: 21%" />
+<col style="width: 21%" />
+<col style="width: 21%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">certificate and TLS version</th>
+<th style="text-align: right;">certificate (bytes)</th>
+<th style="text-align: right;">full handshake client-to-server + server-to-client (bytes)</th>
+<th style="text-align: right;">round trips before first data</th>
+<th style="text-align: right;">resumed handshake (bytes)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">ECDSA P-256, TLS 1.3</td>
+<td style="text-align: right;">325</td>
+<td style="text-align: right;">327 + 1,206 = <strong>1,533</strong></td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">598 + 496 = 1,094</td>
+</tr>
+<tr>
+<td style="text-align: left;">ECDSA P-256, TLS 1.2</td>
+<td style="text-align: right;">325</td>
+<td style="text-align: right;">282 + 781 = 1,063</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">568 + 141 = 709</td>
+</tr>
+<tr>
+<td style="text-align: left;">RSA-2048, TLS 1.3</td>
+<td style="text-align: right;">722</td>
+<td style="text-align: right;">327 + 1,788 = 2,115</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">598 + 496 = 1,094</td>
+</tr>
+<tr>
+<td style="text-align: left;">RSA-2048, TLS 1.2</td>
+<td style="text-align: right;">722</td>
+<td style="text-align: right;">282 + 1,363 = 1,645</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">568 + 141 = 709</td>
+</tr>
+</tbody>
+</table>
+<p>Reading the table: (i) a full handshake with the smallest certificate is 1.1 to 1.5 kB; with RSA 1.6 to 2.1 kB; <strong>real deployments send a chain of two or three certificates, so these are lower bounds</strong>. (ii) TLS 1.3 needs one round trip before the first data byte, TLS 1.2 two (at an assumed 40 ms round trip, 40 ms against 80 ms of extra waiting with the radio on). (iii) Resumption removes the certificate but not the cost: 709 to 1,094 bytes. (iv) For our node the plain MQTT exchange of Unit 5 costs 540 bytes; adding a TLS 1.3 ECDSA handshake makes it <span class="math inline">540+1{,}533=2{,}073</span> bytes, <strong>3.8 times as many</strong>, and a factor of 100 is far off. Prediction 3 of Section 2: a factor of 2 to 4. The time for the microcontroller to do the public-key mathematics is not measured here and is typically larger than the round trips (assumed to be hundreds of milliseconds at the radio’s current: Unit 4’s awake-time budget).</p>
+<p><em>The alternative for a sleeping node on a trusted local link:</em> authenticate each message with the HMAC envelope of Section 3.3.3 (12 bytes, no handshake, no public-key work, no extra round trip) and rely on the Wi-Fi link’s own encryption for confidentiality, then let a <strong>gateway</strong> that stays awake hold the TLS connection to the cloud (Unit 5, Unit 6). This gives integrity, authentication and replay protection; it does not give confidentiality of the readings on the air beyond what the Wi-Fi provides, which for soil moisture is acceptable.</p>
+<figure>
+<img src="../assets/fig/u7/fig04_tls.png" style="width:95.0%" alt="Measured TLS handshake costs for a node that reconnects at every wake-up. Left: bytes per handshake, client-to-server (dark) and server-to-client (light), full (blue) and resumed (orange), for ECDSA and RSA certificates under TLS 1.3 and 1.2; the dotted line is the 540 bytes of the plain MQTT exchange; a full TLS 1.3 handshake with ECDSA is about 1,533 bytes. Right: round trips before the first data byte: 1 for TLS 1.3, 2 for a full TLS 1.2 handshake, 1 for resumed TLS 1.2." />
+<figcaption aria-hidden="true">Measured TLS handshake costs for a node that reconnects at every wake-up. Left: bytes per handshake, client-to-server (dark) and server-to-client (light), full (blue) and resumed (orange), for ECDSA and RSA certificates under TLS 1.3 and 1.2; the dotted line is the 540 bytes of the plain MQTT exchange; a full TLS 1.3 handshake with ECDSA is about 1,533 bytes. Right: round trips before the first data byte: 1 for TLS 1.3, 2 for a full TLS 1.2 handshake, 1 for resumed TLS 1.2.</figcaption>
+</figure>
+<h4 id="secure-boot-and-signed-over-the-air-updates">3.4.2 Secure boot and signed over-the-air updates</h4>
+<p>An <strong>OTA (over-the-air) update</strong> replaces a device’s firmware remotely: indispensable, because bugs will be found, and dangerous, because whoever can push firmware owns the device. The defence is <strong>signing</strong>. A <strong>digital signature</strong> is created with a <em>private key</em> kept secret by the maker and checked with the <em>public key</em> stored in the device; anyone with the public key can verify but cannot sign. (An HMAC cannot do this: any device that can verify an HMAC holds the same key and could forge updates for all the others.) We use <strong>Ed25519</strong>, whose public keys are 32 bytes and signatures 64 bytes (measured). The manifest of our module (<code>make_manifest</code>) is 104 bytes: a 4-byte version, a 4-byte image length, the 32-byte SHA-256 hash of the image, and the 64-byte signature over those 40 bytes. Signing the <em>hash</em> means that the signature is the same size for a 50 kB or a 2 MB image. The device checks, in this order: manifest size; signature; <strong>version strictly newer</strong> than the installed one; image length; image hash. The outcomes of six real cases (Figure 5, left): the genuine update is accepted; an image with one byte changed is refused (hash); a manifest signed by another key is refused (signature); an old signed version offered again is refused (<strong>rollback</strong>: without this check an attacker could reinstall a version with a known hole); a manifest whose version was edited is refused (the signature covers the version); an image shortened by 100 bytes is refused (length).</p>
+<p><strong>Secure boot</strong> applies the same idea at every start: immutable boot code (in ROM) holds the public key and refuses to run a bootloader or application whose signature does not verify; the bootloader checks the application the same way. Updates are written to a second slot (<strong>A/B</strong>), verified again by the bootloader, and the device falls back to the old slot if the new one fails to start. These are design facts about the check chain; the hardware parts (ROM, fuses, flash encryption) are not simulated here.</p>
+<h4 id="least-privilege-an-acl-on-the-broker">3.4.3 Least privilege: an ACL on the broker</h4>
+<p>Authentication says who a client is; <strong>authorisation</strong> says what it may do. An <strong>access-control list (ACL)</strong> for MQTT lists, for each client, the topic filters it may publish to and subscribe to; everything else is denied (<strong>least privilege</strong>). We added two optional hooks to the Unit 5 broker: <code>auth(client_id, username, password)</code> (a refused CONNECT gets CONNACK code 5) and <code>acl(client_id, action, topic)</code> (a refused PUBLISH is acknowledged and dropped; a refused SUBSCRIBE gets <code>0x80</code> in the SUBACK). Subscription filters are checked by <strong>coverage</strong>: a requested filter is allowed only if every topic it matches is matched by an allowed filter (<code>greenhouse/+/soil</code> is covered by <code>greenhouse/#</code>, but <code>greenhouse/#</code> is not covered by <code>greenhouse/zone1/#</code>). The greenhouse’s rules (Figure 5, right): a soil node may publish <code>greenhouse/+/soil</code> and <code>greenhouse/+/temp</code> only; the rover may publish its pose and subscribe to its command topic; the dashboard may subscribe to everything and publish rover commands; an unknown client may do nothing. In an end-to-end test through the broker, a node with a wrong password was refused; a correct node was granted its own publication (<code>greenhouse/zone1/soil</code> reached the dashboard); the same node’s attempt to <strong>subscribe</strong> to <code>greenhouse/#</code> was refused (SUBACK <code>0x80</code>) and its attempt to <strong>publish a forged command</strong> to <code>greenhouse/rover/cmd</code> was dropped and logged (<code>("node1","pub","greenhouse/rover/cmd")</code> in the broker’s denial log): <strong>a compromised soil node cannot command the rover.</strong> ACLs complement the HMAC of Section 3.3.3: the ACL confines what an authenticated client can do; the HMAC protects the command even if the broker itself is breached.</p>
+<figure>
+<img src="../assets/fig/u7/fig05_ota_acl.png" style="width:95.0%" alt="Left: the signed-update path (ROM boot code holding the public key, a bootloader verifying the application signature) and the outcome of six real update checks: the genuine update is installed; a changed image byte, a foreign key, a rolled-back version, an edited version field and a truncated image are all refused. Right: the greenhouse topic ACL as an allow/deny matrix for four clients and six operations, computed from the ACL object." />
+<figcaption aria-hidden="true">Left: the signed-update path (ROM boot code holding the public key, a bootloader verifying the application signature) and the outcome of six real update checks: the genuine update is installed; a changed image byte, a foreign key, a rolled-back version, an edited version field and a truncated image are all refused. Right: the greenhouse topic ACL as an allow/deny matrix for four clients and six operations, computed from the ACL object.</figcaption>
+</figure>
+<p><em>Network segmentation</em> adds a second wall: put the nodes, the rover and the broker on their own network segment (a separate Wi-Fi network or VLAN) that cannot reach the office network, so that a breached camera in the office cannot reach the rover, and a breached node cannot scan the office. It costs a router rule, not code.</p>
+<h4 id="privacy-what-aggregation-hides">3.4.4 Privacy: what aggregation hides</h4>
+<p>Security protects data from attackers; <strong>privacy</strong> is about what the <em>authorised</em> party learns about people. A household’s electricity use reveals when people are home, what they cook and when they sleep. The principle of <strong>data minimisation</strong> says to collect and keep only what the purpose needs, at the coarsest resolution that serves it. Aggregation (Unit 6) is the engineering tool, but it hides less than one hopes. We simulated a household with a base load of 300 W (noise 30 W) and two appliance events with the <strong>same energy</strong>: a kettle (2000 W for 3 minutes, 100 Wh) and a space heater (400 W for 15 minutes, 100 Wh) (Figure 6, left; the powers are assumed). An observer sees only means over a window <span class="math inline">w</span>, takes the largest window mean of a two-hour record and decides by the nearer class mean whether it was the kettle or the heater; separately, decides whether <em>anything</em> happened. Over 400 trials per window:</p>
+<table>
+<caption>observer accuracy against aggregation window (chance is 50% for the first row). Hiding <em>which</em> appliance needs windows of 30 minutes or more, and even then the observer is right 62% of the time; hiding <em>whether</em> anything happened needs more than that. <strong>Aggregation reduces what can be learned slowly, and some information always survives.</strong> Stronger tools (adding calibrated noise, “differential privacy”; keeping data at the edge; not collecting it) are named, not taught.</caption>
+<colgroup>
+<col style="width: 9%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">window</th>
+<th style="text-align: right;">1 min</th>
+<th style="text-align: right;">2 min</th>
+<th style="text-align: right;">3 min</th>
+<th style="text-align: right;">5 min</th>
+<th style="text-align: right;">10 min</th>
+<th style="text-align: right;">15 min</th>
+<th style="text-align: right;">30 min</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">tells kettle from heater</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">89.5%</td>
+<td style="text-align: right;">78.0%</td>
+<td style="text-align: right;">61.8%</td>
+</tr>
+<tr>
+<td style="text-align: left;">detects that something happened</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">92.2%</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="../assets/fig/u7/fig06_privacy.png" style="width:95.0%" alt="Left: a household power trace at one-minute resolution for a kettle (2000 W, 3 min) and a heater (400 W, 15 min), and their 15-minute means (dashed): both become the same +400 W step. Right: observer accuracy against aggregation window: telling the kettle from the heater (blue) falls from 100% at 5 minutes to 78% at 15 and 61.8% at 30, while detecting that something happened (orange) stays at 100% up to 15 minutes. Powers and noise are assumed." />
+<figcaption aria-hidden="true">Left: a household power trace at one-minute resolution for a kettle (2000 W, 3 min) and a heater (400 W, 15 min), and their 15-minute means (dashed): both become the same +400 W step. Right: observer accuracy against aggregation window: telling the kettle from the heater (blue) falls from 100% at 5 minutes to 78% at 15 and 61.8% at 30, while detecting that something happened (orange) stays at 100% up to 15 minutes. Powers and noise are assumed.</figcaption>
+</figure>
+<h3 id="tier-5-hardest-open-questions">3.5 Tier 5 (hardest): open questions</h3>
+<ol type="1">
+<li><strong>Where does the first key come from?</strong> Per-device keys need provisioning: at the factory, by a first-use pairing, or by a hardware secure element. Each has a trust problem (the factory, the first connection, the chip). Design a pairing for 50 soil nodes that a non-expert can run, and say what an attacker present during pairing could do.</li>
+<li><strong>Time and counters.</strong> A device without a clock cannot use timestamps; one with a counter must store it. Compare counters, timestamps and challenge-response against replay, with the cost of each in energy and state.</li>
+<li><strong>Updates for devices that cannot be updated.</strong> A device with no OTA path is a permanent vulnerability. What should makers owe (support periods, signed updates) and what can an owner do (isolate, replace)?</li>
+</ol>
+<h2 id="apply">4. Apply</h2>
+<h3 id="worked-problems">4.1 Worked problems</h3>
+<p><strong>Problem 1 (entropy).</strong> A password of 10 random lowercase letters: entropy, expected guesses, and time at <span class="math inline">10^8</span> guesses per second.</p>
+<p><em>Solution.</em> <span class="math inline">H=10\log_226=47.0</span> bits; expected guesses <span class="math inline">2^{46.0}=7.0\times10^{13}</span>; time <span class="math inline">7.0\times10^{5}</span> s <span class="math inline">=8.1</span> days.</p>
+<p><strong>Problem 2 (tag length).</strong> A command envelope has a 3-byte tag. How many forged attempts, on average, until one is accepted, and how long at 1000 attempts per second?</p>
+<p><em>Solution.</em> <span class="math inline">2^{24}=1.7\times10^{7}</span> attempts; <span class="math inline">1.7\times10^4</span> s <span class="math inline">=4.7</span> hours. Too short: use at least 8 bytes or rate-limit.</p>
+<p><strong>Problem 3 (replay).</strong> The receiver’s last accepted counter is 41. Which of these envelopes (counter, valid tag) does it accept: 40, 41, 42, 1000?</p>
+<p><em>Solution.</em> 42 and 1000 (strictly greater). 40 and 41 are replays. Note that accepting 1000 moves the receiver’s counter to 1000, so a sender at 43 is then refused: counters must not jump without reason (a window limit helps).</p>
+<p><strong>Problem 4 (ACL coverage).</strong> Is <code>greenhouse/+/temp</code> covered by the allowed filter <code>greenhouse/zone1/#</code>? And <code>greenhouse/zone1/temp</code>?</p>
+<p><em>Solution.</em> No: <code>+</code> matches other zones that the allowed filter does not cover. Yes: the topic is under <code>greenhouse/zone1/</code>.</p>
+<p><strong>Problem 5 (TLS cost).</strong> A node sends 1 reading a minute over a fresh MQTT QoS 1 connection with TLS 1.3 and ECDSA: bytes per day and the factor against plain MQTT.</p>
+<p><em>Solution.</em> <span class="math inline">2{,}073\times1440=2.99</span> MB per day against <span class="math inline">0.78</span> MB plain: 3.8 times. Reducing it needs a gateway to hold the connection, or a UDP-based design, or the HMAC envelope on the local link.</p>
+<h3 id="code-and-figures">4.2 Code and figures</h3>
+<pre class="python"><code>import iot_sec as S
+
+master = b&quot;keep-this-secret-offline&quot;
+key = S.derive_key(master, &quot;rover1&quot;)                       # per-device key
+env = S.sign_command(key, counter=10, cmd=b&quot;goto plant7&quot;)  # 4 + 11 + 8 = 23 bytes
+print(S.verify_command(key, env, last_counter=9))          # (True, &#39;ok&#39;, b&#39;goto plant7&#39;, 10)
+print(S.verify_command(key, env, last_counter=10))         # (False, &#39;replay&#39;, None, 10)
+
+sk, pk = S.make_keypair()                                  # Ed25519 (needs the cryptography package)
+man = S.make_manifest(7, firmware_bytes, sk)               # 104 bytes
+print(S.verify_ota(man, firmware_bytes, pk, current_version=6))   # (True, &#39;ok&#39;)
+
+acl = S.Acl([(r&quot;node\d+&quot;, &quot;pub&quot;, &quot;greenhouse/+/soil&quot;), (&quot;dashboard&quot;, &quot;sub&quot;, &quot;greenhouse/#&quot;)])
+# Broker(auth=lambda cid, user, pw: ..., acl=acl)  (Unit 5 broker with the new hooks)</code></pre>
+<p>The module and README are in <code>codes/security/iot_sec/</code>. Its six tests check: the password arithmetic; the HMAC envelope against good, forged, tampered, replayed, short and other-device inputs, including every single-bit flip; the OTA checks against six attacks (skipped without <code>cryptography</code>); ACL coverage and the greenhouse rules; the broker hooks end to end (refused password, refused subscription, dropped forged command, denial log); and the TLS meter (resumption is smaller; TLS 1.3 needs 1 round trip and TLS 1.2 needs 2). The ten tests of the Unit 5 module still pass after the hooks were added.</p>
+<p><em>What would look different if the theory were wrong?</em> If the envelope did not bind the counter to the tag, a replay with an old counter would be accepted; both the replay and the old-counter case are refused. If the ACL coverage rule were wrong, the dashboard’s <code>greenhouse/#</code> would be refused or the node’s <code>greenhouse/#</code> would be allowed; neither happens. If the TLS meter were wrong, it would not reproduce the known 1-round-trip difference between TLS 1.3 and 1.2; it does.</p>
+<h2 id="analyze">5. Analyze</h2>
+<p><strong>Limits.</strong> Entropy adds linearly in bits and the search cost multiplies: each extra bit doubles it. As the tag grows the forgery probability halves per bit, so beyond about 64 bits further length buys nothing against online guessing. As the aggregation window grows the observer’s accuracy tends to chance, but never exactly (92% at 30 minutes for “whether”).</p>
+<p><strong>Dominance.</strong> For a Mirai-type attack, the dominating fact is that credentials are shared: the strength of the password is irrelevant when everyone has the same one. For a sleeping node, the TLS cost is dominated by the certificate and the handshake, not by the application data (31 bytes in 1,533 + 540).</p>
+<p><strong>Order-of-magnitude estimate.</strong> A 62-credential dictionary against a device with a default needs at most 62 tries; against a unique 12-character password about <span class="math inline">10^{21}</span>: the gap is 19 orders of magnitude, which is what “per-device secrets” buys.</p>
+<p><strong>Failure modes.</strong> (1) <em>Shared default credentials</em> (Mirai). (2) <em>Replay of a genuine command</em> (no counter). (3) <em>A counter that resets</em> (replay window). (4) <em>An unsigned update path</em> (the whole fleet taken over). (5) <em>No rollback protection</em> (old holes reopened). (6) <em>An over-privileged client</em> (a node commanding the rover). (7) <em>A key shared across all devices</em> (one theft breaks every device). (8) <em>Aggregation mistaken for anonymity</em>.</p>
+<h2 id="evaluate">6. Evaluate</h2>
+<p><strong>HMAC versus TLS versus DTLS.</strong> HMAC per message (12 bytes, no handshake) authenticates and orders messages but does not encrypt, protects only against parties without the key, and needs key distribution and persistent counters. TLS protects a whole connection (confidentiality, integrity, server authentication) at 1.1 to 2.1 kB and 1 or 2 round trips per fresh connection. DTLS is TLS for datagram transports such as CoAP (named, not measured). A sensible split for the greenhouse: HMAC on the node link, TLS from the gateway to the cloud.</p>
+<p><strong>Symmetric versus asymmetric.</strong> A shared key (HMAC) is small and fast but any verifier can also forge; a signature (Ed25519) lets a device verify what it cannot create, which is what a firmware update needs, at 64 bytes per signature and public-key mathematics on the device.</p>
+<p><strong>Privacy by design.</strong> Collecting less beats protecting more. Edge aggregation (Unit 6) is a privacy tool as well as a bandwidth tool, provided one knows what it does not hide (Section 3.4.4).</p>
+<p><strong>Context.</strong> Mirai is the textbook case for per-device secrets, patching and egress control: it succeeded against a <em>dictionary of 62 pairs</em>, not against clever cryptography. <strong>When NOT to use these methods:</strong> do not invent your own cryptography (use standard algorithms and well-tested libraries; our HMAC and Ed25519 come from Python’s <code>hmac</code> and the <code>cryptography</code> package, and the course’s code teaches the protocol around them, not the primitives); do not treat a classroom broker as hardened (ours has no TLS, rate limiting or persistent sessions); do not rely on obscurity.</p>
+<p><strong>Honesty about this Unit’s numbers.</strong> The Mirai facts were read in the paper. The guessing rates, the Zipf popularity, the appliance powers and the risk scores are assumptions or judgments. The HMAC, OTA and ACL experiments are real executions of the module’s code; the TLS bytes are real but for one small self-signed certificate; the cryptographic computation time on a microcontroller, certificate chains, revocation and hardware secure elements are not covered. The security of the course’s own code was not audited.</p>
+<h2 id="create">7. Create</h2>
+<div class="create" title="What you can build from this">
+<ol type="1">
+<li><strong>Add a replay window.</strong> Let the receiver accept counters up to 16 ahead and keep a bitmap of recently seen ones, so a lost command does not block the next; test with reordered envelopes.</li>
+<li><strong>Rate-limit the broker.</strong> Count failed CONNECTs per client and delay or refuse after 5 in a minute; show how it multiplies the time to guess a short tag.</li>
+<li><strong>Provision keys.</strong> Write a first-use pairing for a new soil node (a short code typed on the dashboard), derive its key from the master with <code>derive_key</code>, and list what an eavesdropper at pairing time would learn.</li>
+<li><strong>Could become a package module:</strong> <code>iotrobotics.security</code> with the envelope, OTA manifest, ACL and the TLS meter, reused by the capstone (Unit 12).</li>
+</ol>
+</div>
+<p><strong>Running project, Layer 6: the hardened node and rover.</strong> The soil node sends its reading as before, with a per-device key and an HMAC-protected, counter-numbered envelope on the local link; the gateway holds the TLS connection to the cloud. The rover accepts only commands whose envelope verifies (per-device key, 8-byte tag, strictly increasing counter), and refuses firmware whose manifest does not verify (signature, newer version, length, hash). The broker authenticates every client and applies a least-privilege ACL; the nodes and rover live on their own network segment. Updated requirements:</p>
+<table>
+<caption>running-project requirements updated by Unit 7. The cryptographic time on the microcontroller and the key-provisioning procedure are open.</caption>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">id</th>
+<th style="text-align: left;">requirement</th>
+<th style="text-align: left;">status after Unit 7</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">R7</td>
+<td style="text-align: left;">only authorised commands move the rover</td>
+<td style="text-align: left;">met by HMAC-authenticated, counter-numbered commands (23 bytes for an 11-byte command) plus the ACL; 0 of 100,000 random forgeries accepted, replays refused</td>
+</tr>
+<tr>
+<td style="text-align: left;">S1</td>
+<td style="text-align: left;">the rover stops when the link is lost for more than 5 s</td>
+<td style="text-align: left;">unchanged (Unit 11); a replayed “go” command is now refused, so a recorded command cannot restart it</td>
+</tr>
+<tr>
+<td style="text-align: left;">R22 (new)</td>
+<td style="text-align: left;">every firmware update is signed and cannot be rolled back</td>
+<td style="text-align: left;">Ed25519 manifest of 104 bytes; six attack cases refused</td>
+</tr>
+<tr>
+<td style="text-align: left;">R23 (new)</td>
+<td style="text-align: left;">no shared default credentials</td>
+<td style="text-align: left;">per-device keys derived from a master; broker authentication refuses a wrong password</td>
+</tr>
+<tr>
+<td style="text-align: left;">R24 (new)</td>
+<td style="text-align: left;">a compromised node cannot command the rover</td>
+<td style="text-align: left;">ACL: node publishes only <code>greenhouse/+/soil</code> and <code>+/temp</code>; tested through the broker</td>
+</tr>
+<tr>
+<td style="text-align: left;">R25 (new)</td>
+<td style="text-align: left;">the extra cost of security on a sleeping node stays under 100 bytes and no extra round trip</td>
+<td style="text-align: left;">HMAC envelope: 12 bytes, 0 round trips; TLS on the node would add 1,533 bytes and 1 round trip, so TLS is placed at the gateway</td>
+</tr>
+<tr>
+<td style="text-align: left;">R26 (new)</td>
+<td style="text-align: left;">the cloud receives no raw per-minute household-style data</td>
+<td style="text-align: left;">10-minute edge aggregates (Unit 6); but windows below 30 minutes do not hide which events occurred (Section 3.4.4)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="visualization-lesson">8. Visualization lesson</h2>
+<table>
+<caption>the chart types of this Unit. Ladder: <em>remember</em> the names; <em>understand</em> what each shows; <em>apply</em> the call; <em>analyse</em> how it misleads; <em>evaluate</em> when a table is better (the entropy table of Section 3.3.1: the reader wants exact times); <em>create</em> a new one (a threat-by-flow matrix coloured by risk score).</caption>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Chart type</th>
+<th style="text-align: left;">Best for</th>
+<th style="text-align: left;">How it misleads</th>
+<th style="text-align: left;">matplotlib call</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">data-flow diagram with trust boundaries</td>
+<td style="text-align: left;">where threats arise (flows crossing boundaries)</td>
+<td style="text-align: left;">a diagram shows paths, not likelihoods; add the risk table</td>
+<td style="text-align: left;"><code>Rectangle(ls="--")</code>, <code>FancyArrowPatch</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">bars of entropy with annotated times</td>
+<td style="text-align: left;">comparing secrets on a log-like quantity</td>
+<td style="text-align: left;">bits are logarithmic: a bar twice as tall is not twice as hard</td>
+<td style="text-align: left;"><code>ax.bar(x, bits)</code>, <code>ax.text(...)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">coverage curve (CDF of a dictionary)</td>
+<td style="text-align: left;">how much of a population a list reaches</td>
+<td style="text-align: left;">the curve depends on an assumed popularity model; say so</td>
+<td style="text-align: left;"><code>ax.plot(D, coverage)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">log-scale dual-axis (probability and overhead against tag length)</td>
+<td style="text-align: left;">an exponential gain against a linear cost</td>
+<td style="text-align: left;">a dual axis invites false crossing points; the log axis hides how small the probability is</td>
+<td style="text-align: left;"><code>ax.semilogy(...)</code>, <code>ax.twinx()</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">stacked bars of direction (client to server, server to client)</td>
+<td style="text-align: left;">the composition of a cost</td>
+<td style="text-align: left;">totals are easy, the split is not; label the totals</td>
+<td style="text-align: left;"><code>ax.bar(x, a)</code>, <code>ax.bar(x, b, bottom=a)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">accuracy against a parameter, with the chance line</td>
+<td style="text-align: left;">how an observer’s success falls</td>
+<td style="text-align: left;">accuracy near 50% is not “safe” in the way that 100% is “unsafe”: it depends on the stakes</td>
+<td style="text-align: left;"><code>ax.plot(w, acc)</code>, <code>ax.axhline(50)</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading Figure 5 (right) as a chart.</strong> The matrix is the ACL: a row is a client’s whole authority. Reading across a row tells what a compromise of that client costs; the stranger row is all red by design.</p>
+<h2 id="problem-set">9. Problem set</h2>
+<div class="exercise" title="Graded exercises">
+<ol type="1">
+<li>(easy) How many bits of entropy does a 6-digit numeric code have, and how long to search it at 100 guesses per second?</li>
+<li>(medium) The rover’s envelope uses a 6-byte tag. Find the expected forgery attempts and the time at <span class="math inline">10^4</span> attempts per second. Is it safe?</li>
+<li>(medium-hard) A Mirai-like scanner tries 10 pairs per login from a dictionary of 62. A device has credential rank 40. Expected visits until success, and the probability of failing 10 visits in a row?</li>
+<li>(hard) Show that if the counter were <em>not</em> covered by the tag, an attacker who captures one genuine envelope could make the receiver accept an old command with a new counter. Why does the module’s design prevent it?</li>
+<li>(hardest) Design the key hierarchy for 50 nodes and one rover: what is stored where, what happens if one node is stolen, and how do you revoke it without re-flashing the others? Use <code>derive_key</code> and say what its limits are.</li>
+</ol>
+</div>
+<h2 id="retrieval-practice-and-recap">10. Retrieval practice and recap</h2>
+<p><strong>Answers to the Section 2 predictions.</strong></p>
+<ol type="1">
+<li>62 pairs (Mirai tried 10 random ones from the 62 per login).</li>
+<li>Billions of years: <span class="math inline">1.8\times10^{19}</span> expected attempts, <span class="math inline">5.8\times10^{9}</span> years at 100 per second (a probability of <span class="math inline">5\times10^{-20}</span> per try).</li>
+<li>A factor of 2 to 4: 540 + 1,533 = 2,073 bytes (3.8 times).</li>
+</ol>
+<p><strong>Answers to the Section 2 recall quiz.</strong></p>
+<ol type="1">
+<li>Confidentiality, integrity, availability.</li>
+<li>Replay: a genuine old message has a valid tag, but its counter is no longer greater than the last accepted one.</li>
+<li>Every device that can verify an HMAC holds the same key and could forge updates for all the others; a signature needs a private key that stays with the maker.</li>
+<li>It denies subscribing to other topics and publishing to the rover’s command topic (and anything not on its list).</li>
+<li>Aggregation hides detail (which appliance); it does not hide that something happened, and some information about which always survives (62% right at 30 minutes in our test).</li>
+</ol>
+<p><strong>Explain it to a friend.</strong></p>
+<ul>
+<li>Why was a botnet of 600,000 devices possible with only 62 passwords?</li>
+<li>Why does a command need both a tag and a counter?</li>
+<li>Why is TLS a poor fit for a node that sleeps, and what do we do instead?</li>
+</ul>
+<p><strong>Re-derive by hand tomorrow, without looking:</strong> (a) the expected guesses <span class="math inline">2^{H-1}</span> and the time at a given rate; (b) the forgery probability <span class="math inline">2^{-8t}</span> of a <span class="math inline">t</span>-byte tag and the overhead of the envelope; (c) the ACL coverage rule for <code>+</code> and <code>#</code>.</p>
+<h2 id="where-next">11. Where next</h2>
+<ul>
+<li><strong>Unit 8</strong> leaves the network for the robot itself: coordinate frames, rotations, the kinematics of a two-link arm and of the differential-drive rover, and odometry with its drift.</li>
+<li>Terms named here but not taught: public-key cryptography beyond signatures, certificate authorities and revocation, differential privacy, hardware secure elements, data-protection law. They are registered in CURRICULUM.md.</li>
+<li><strong>Open threads:</strong> the microcontroller’s cryptographic time is not measured; TLS bytes are for one small certificate; key provisioning is a design question not a built feature; the course’s code has not been security-audited; the Zipf popularity, guessing rates and risk scores are assumptions.</li>
+</ul>
+<p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u6.html">&larr; Data, cloud, edge</a><a class="btn" href="u8.html">Kinematics &rarr;</a></p></article></div></main>
+<footer><div class="wrap">Internet of Things and Robotics crash course · Code is MIT-licensed; PDFs are for study use. Companion to the <a href="../../index.html">Generative AI and LLMs course</a>.</div></footer>
+<script>
+document.getElementById('theme').onclick=function(){var d=document.documentElement,c=d.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'),n=c==='dark'?'light':'dark';d.dataset.theme=n;try{localStorage.setItem('theme',n)}catch(e){}};
+</script>
+<script src="../../assets/vendor/katex/katex.min.js"></script><script>document.querySelectorAll(".math").forEach(function(n){var d=n.classList.contains("display");var t=n.textContent.replace(/^\\[\(\[]|\\[\)\]]$/g,"");try{katex.render(t,n,{displayMode:d,throwOnError:false})}catch(e){}});</script></body></html>

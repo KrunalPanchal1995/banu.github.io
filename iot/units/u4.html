@@ -1,0 +1,660 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unit 4: Microcontrollers and Embedded Programming: Pins, Interrupts, State Machines · IoT and Robotics</title>
+<meta name="description" content="From volts and sensors to MQTT, security, kinematics, control, localisation and navigation, built around one running project: a Smart Greenhouse Rover. Twelve units with a PDF and runnable code each, a 14-lab track and an assessment bank. Built for a B.Tech student; simulation-first, no hardware needed.">
+<link rel="stylesheet" href="../../assets/css/style.css"><link rel="stylesheet" href="../assets/css/iot.css">
+<script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="stylesheet" href="../../assets/vendor/katex/katex.min.css"></head><body>
+<header class="site-head"><div class="wrap">
+<a class="brand" href="../index.html">IoT <span>&amp;</span> Robotics<span class="long"> crash course</span></a>
+<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
+</div></header>
+<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 4</strong><a href="#session-map">Session map</a><a href="#terms-the-term-tree">1. Terms: the term tree</a><a href="#remember">2. Remember</a><a href="#understand-the-derivation">3. Understand: the derivation</a><a href="#apply">4. Apply</a><a href="#analyze">5. Analyze</a><a href="#evaluate">6. Evaluate</a><a href="#create">7. Create</a><a href="#visualization-lesson">8. Visualization lesson</a><a href="#problem-set">9. Problem set</a><a href="#retrieval-practice-and-recap">10. Retrieval practice and recap</a><a href="#where-next">11. Where next</a></aside><article class="doc"><p><span class="chip">Unit 4</span> <span class="chip ">ready</span></p><h1>Microcontrollers and Embedded Programming: Pins, Interrupts, State Machines</h1><p class="lede">GPIO, interrupts, debouncing, UART and I2C timing, and the sensor node as a state machine.</p><div class="dl"><a class="btn primary" href="../downloads/u4/u4-notes.pdf" download>PDF notes<small>857 KB</small></a><a class="btn" href="../downloads/u4/u4-notes.docx" download>Word (.docx)<small>636 KB</small></a><a class="btn" href="../downloads/u4/u4-code.zip" download>All code (.zip)<small>34 KB</small></a></div><h2 id="session-map">Session map</h2>
+<div class="keyidea" title="Outcome of this session">
+<p>After this session you can:</p>
+<ol type="1">
+<li>choose between a microcontroller and a single-board computer for a job, and describe what a GPIO pin, a timer and an interrupt do;</li>
+<li>explain why a mechanical button needs debouncing, write the rule as a few lines of state-machine code, and state what it costs;</li>
+<li>show why polling an encoder below its transition rate loses counts (and can even count backwards), and size the cost of the interrupt alternative;</li>
+<li>derive the baud-rate tolerance of a UART and the pull-up limit of an I2C bus, and estimate the time to read a register;</li>
+<li>write the sensor node’s cycle as a finite-state machine with retries and back-off, and compute what the retry policy costs in battery and buys in delivery.</li>
+</ol>
+</div>
+<ul>
+<li><strong>Prerequisites:</strong> Unit 2 (pull-ups, RC rise time, the node’s state-by-state power budget), Unit 3 (aliasing, quadrature encoder, burst averaging). Basic Python.</li>
+<li><strong>Difficulty ladder used:</strong> easy → medium → medium-hard → hard (Sections 3.1 to 3.4); the hardest tier is posed as open questions in Section 3.5.</li>
+<li><strong>Deliverables:</strong> this document (.tex, .pdf, .docx), 6 figures, the module <code>codes/embedded/fsm_sim/</code> (<code>node_fsm.py</code>, a debouncer and the node state machine that run unchanged on MicroPython; <code>fsm_sim.py</code>, host simulators; 9 tests), and the <code>firmware/</code> folder (MicroPython <code>main.py</code>, Arduino <code>button_fsm.ino</code>, Wokwi <code>diagram.json</code>).</li>
+<li><strong>Source anchors:</strong> all formulas are derived in the text. <strong>Honesty label: logic tested on the host; hardware I/O not executed.</strong> <code>node_fsm.py</code> is unit-tested under CPython with a fake hardware object; <code>main.py</code>, the Arduino sketch and the Wokwi wiring were never run on a board or in Wokwi here. The contact-bounce timings (chatter of up to about 8 ms), the 5 <span class="math inline">\mu</span>s interrupt handler, the node’s currents and times, the 3 s connect timeout, and the I2C rise-time limits (1000 ns and 300 ns) are <strong>assumed typical values</strong>, not measurements; check the I2C specification and your datasheets.</li>
+</ul>
+<h2 id="terms-the-term-tree">1. Terms: the term tree</h2>
+<table>
+<colgroup>
+<col style="width: 22%" />
+<col style="width: 14%" />
+<col style="width: 37%" />
+<col style="width: 13%" />
+<col style="width: 10%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Term</th>
+<th style="text-align: center;">Symbol</th>
+<th style="text-align: left;">One-line meaning</th>
+<th style="text-align: center;">Where it appears</th>
+<th style="text-align: center;">New / known</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">microcontroller (MCU)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a chip with a processor, memory and input/output pins, for one dedicated job</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">single-board computer (SBC)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a small general computer that runs an operating system (for example Linux)</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">GPIO</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">general-purpose input/output pin: reads or drives a logic level</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">interrupt</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a hardware signal that pauses the main code and runs a handler immediately</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">timer</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a hardware counter that ticks at a fixed rate, used for time, PWM and wake-up</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">super-loop</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">one endless loop that calls every task in turn</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">RTOS</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a small operating system that switches between tasks by priority</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">finite-state machine (FSM)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a system that is always in one state and changes state on events</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">contact bounce</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a mechanical switch chattering for a few ms when it closes or opens</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">debouncing</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">accepting a new input level only after it has been stable for a set time</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">polling</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">repeatedly reading an input in the main loop</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">interrupt handler (ISR)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the short function that runs when an interrupt fires</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">UART</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a two-wire serial link with no clock; both sides must agree on the baud rate</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">baud rate</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">bits per second on a serial line</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">I2C</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a two-wire shared bus (clock SCL, data SDA) with device addresses and pull-ups</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">SPI</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a four-wire fast bus with a clock and chip-select per device</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">back-off</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">waiting longer before each retry</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">deep sleep</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a low-power mode in which almost everything is off and the chip resets on wake</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">MicroPython</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">Python for microcontrollers</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+</tbody>
+</table>
+<p>Terms <em>used but not taught here</em>: MQTT (Unit 5), Wi-Fi details (Unit 5), watchdog timer (named only), DMA (named only), PID (Unit 9).</p>
+<h2 id="remember">2. Remember</h2>
+<div class="definition" title="Microcontroller versus single-board computer">
+<p>A <strong>microcontroller (MCU)</strong> is a computer on one chip: a processor, a few hundred kilobytes of memory, timers, serial buses, an ADC and pins (<strong>GPIO</strong>: general-purpose input/output) that you read and drive directly. It runs one program, or a small scheduler, starts in milliseconds and can sleep at microamperes. A <strong>single-board computer (SBC)</strong> such as a Raspberry Pi is a general computer with gigabytes of memory that runs an operating system (Linux); it can run Python, a database and a camera pipeline, boots in tens of seconds and draws watts. The ESP32 board used in this course is an MCU with Wi-Fi.</p>
+</div>
+<div class="definition" title="Typical orders of magnitude (not measured here)">
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;"></th>
+<th style="text-align: left;">MCU (ESP32 class)</th>
+<th style="text-align: left;">SBC (Raspberry Pi class)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">clock</td>
+<td style="text-align: left;">about 240 MHz</td>
+<td style="text-align: left;">about 1 to 2 GHz, several cores</td>
+</tr>
+<tr>
+<td style="text-align: left;">memory</td>
+<td style="text-align: left;">hundreds of kB</td>
+<td style="text-align: left;">gigabytes</td>
+</tr>
+<tr>
+<td style="text-align: left;">software</td>
+<td style="text-align: left;">one program, or an RTOS</td>
+<td style="text-align: left;">full operating system</td>
+</tr>
+<tr>
+<td style="text-align: left;">boot</td>
+<td style="text-align: left;">milliseconds</td>
+<td style="text-align: left;">tens of seconds</td>
+</tr>
+<tr>
+<td style="text-align: left;">power</td>
+<td style="text-align: left;">milliwatts awake; microwatts asleep</td>
+<td style="text-align: left;">watts; no true deep sleep</td>
+</tr>
+<tr>
+<td style="text-align: left;">best at</td>
+<td style="text-align: left;">real-time pins, sensors, battery nodes</td>
+<td style="text-align: left;">vision, planning, storage, networking</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Typical values are quoted from general knowledge and are marked as such; replace them with datasheet values for a real design. The rover uses both: an MCU close to the motors and encoders, an SBC as the “edge” computer of Unit 1.</p>
+<div class="definition" title="A finite-state machine (FSM)">
+<p>A <strong>finite-state machine</strong> is always in exactly one <strong>state</strong>; an <strong>event</strong> (a button edge, a timeout, a message) moves it to the next state according to a table, and the transition may trigger an <strong>action</strong>. Writing embedded code as an FSM makes every case explicit: what happens on a failure in each state is a line in the table, not a surprise.</p>
+</div>
+<p><strong>Memory hooks.</strong></p>
+<ul>
+<li><em>Poll or interrupt: “do I keep asking, or do they tell me?”</em> Polling is simple but loses fast events; an interrupt costs a little time per event but never misses one.</li>
+<li><em>A switch is a spring, not a wire.</em> It bounces for a few milliseconds, so one press is many edges.</li>
+<li><em>Never block.</em> A <code>delay()</code> or a long network call stops everything else; use a state machine and timers.</li>
+<li><em>Sleep is the default; awake is the exception.</em> (Unit 2: the battery is spent while awake.)</li>
+</ul>
+<p><strong>Before you read on: three predictions</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>A button press makes the contact chatter for a few milliseconds. About how many falling edges would an unfiltered input count for one press: 1, about 6, or about 100?</li>
+<li>The rover’s encoder makes 3183 state changes per second at 0.5 m/s. If your loop polls it 1000 times per second, does the count come out low, or can it come out <em>negative</em>?</li>
+<li>A UART’s receiver clock is 6% faster than the sender’s. Does it still receive every byte correctly?</li>
+</ol>
+<p><strong>Recall quiz</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>What is the main difference between an MCU and an SBC?</li>
+<li>What does an interrupt do that polling cannot?</li>
+<li>Why is a debounce time always a compromise?</li>
+<li>What does the stop bit of a UART frame let the receiver check?</li>
+<li>In which state does a battery node spend most of its time, and why must it not block while there?</li>
+</ol>
+<h2 id="understand-the-derivation">3. Understand: the derivation</h2>
+<h3 id="tier-1-easy-intuition-and-a-picture">3.1 Tier 1 (easy): intuition and a picture</h3>
+<p>A pushbutton is two bits of springy metal. When they meet, they do not stay together cleanly: they bounce apart and together several times over a few milliseconds before settling. To a microcontroller reading the pin a million times a second this is not one press but a burst of edges. Figure 1 (left) shows one simulated press: the raw pin falls, rises, falls, rises, falls, rises and falls again between 10 and 18 ms, and only then stays low. A counter that increments on each falling edge would count it four times. Over 150 simulated presses, an unfiltered input counts <strong>5.81</strong> falling edges per press on average (the chatter at the <em>release</em> adds some too). Prediction 1 of Section 2: about 6.</p>
+<p>The fix is a rule, not a part: <strong>accept a new level only after it has stayed the same for a set time</strong> (a <strong>debounce</strong> time). In Figure 1 (left) the debounced output (blue) changes once, about 38 ms after the press started: the 18 ms the contact needed to settle plus the 20 ms rule. One press, one event.</p>
+<figure>
+<img src="../assets/fig/u4/fig01_bounce.png" style="width:95.0%" alt="Left: one simulated button press. The raw pin (orange) chatters from 10 to 18 ms; the debounced output (blue, 20 ms rule) changes once, at about 38 ms. Right: over 150 simulated presses of 15 to 200 ms, the events counted per press (blue) and the percentage of presses lost entirely (orange) against the debounce time. Without debouncing 5.81 events are counted per press; from 5 ms up the count is 1.00; but at 20 ms 5.3% of presses are lost and at 60 ms 22.7%." />
+<figcaption aria-hidden="true">Left: one simulated button press. The raw pin (orange) chatters from 10 to 18 ms; the debounced output (blue, 20 ms rule) changes once, at about 38 ms. Right: over 150 simulated presses of 15 to 200 ms, the events counted per press (blue) and the percentage of presses lost entirely (orange) against the debounce time. Without debouncing 5.81 events are counted per press; from 5 ms up the count is 1.00; but at 20 ms 5.3% of presses are lost and at 60 ms 22.7%.</figcaption>
+</figure>
+<p>The right panel shows the price: a debounce time long enough to hide the chatter is also long enough to swallow a quick tap. Debouncing is always a compromise between <strong>false events</strong> and <strong>lost events</strong>.</p>
+<h3 id="tier-2-medium-the-definitions-made-precise">3.2 Tier 2 (medium): the definitions made precise</h3>
+<h4 id="what-an-mcu-gives-you">3.2.1 What an MCU gives you</h4>
+<ul>
+<li><strong>GPIO.</strong> A pin can be set as an <em>input</em> (reads 0 or 1; Unit 2: add a pull-up to avoid a floating input) or an <em>output</em> (drives 0 V or 3.3 V; a few mA to tens of mA at most, so a transistor from Unit 2 drives anything larger). Many pins have alternate functions: PWM, ADC, serial buses.</li>
+<li><strong>Timers.</strong> A timer is a counter driven by the clock, divided by a <strong>prescaler</strong>. With an assumed 80 MHz timer clock and a prescaler of 80, it ticks at 1 MHz (1 <span class="math inline">\mu</span>s per tick); a 16-bit counter then wraps every <span class="math inline">65{,}536\ \mu\text{s}=65.5</span> ms. A PWM signal at 1 kHz is a period of 1000 ticks, so its duty cycle (Unit 2) has 1000 steps, about 10 bits of resolution. A hobby-servo signal (Unit 3) is a 20 ms period of 20,000 ticks with a 1000 to 2000 tick pulse.</li>
+<li><strong>Interrupts.</strong> The processor can be told to stop what it is doing, run a short function (the <strong>interrupt handler</strong>, ISR) and return. Interrupts come from pins (an edge), timers (a tick) and peripherals (a byte arrived). The handler must be short: it blocks everything of lower priority.</li>
+<li><strong>Buses.</strong> UART, I2C and SPI (Section 3.4) connect sensors and other chips with few wires.</li>
+</ul>
+<h4 id="two-ways-to-structure-the-program">3.2.2 Two ways to structure the program</h4>
+<p>A <strong>super-loop</strong> is one endless loop that calls each task in turn: read the sensor, update the display, publish. It is the simplest design and is fine when every task is short. Its weakness is that <em>every task waits for the slowest one</em>. An <strong>RTOS</strong> (real-time operating system) lets each task run as its own thread with a priority, and the scheduler switches to the highest-priority task that is ready, interrupting a low-priority one (<strong>preemption</strong>). Section 3.3.3 puts numbers on the difference.</p>
+<h3 id="tier-3-medium-hard-the-main-derivations">3.3 Tier 3 (medium-hard): the main derivations</h3>
+<h4 id="debouncing-as-a-state-machine">3.3.1 Debouncing as a state machine</h4>
+<p>The debouncer of the module is a two-state-plus-timer machine with three variables: <code>state</code> (the accepted level), <code>cand</code> (the level currently being timed) and <code>t_change</code> (when the raw level last changed). For each raw sample at time <span class="math inline">t</span>:</p>
+<ul>
+<li>if the raw level differs from <code>cand</code>: set <code>cand</code> to it and <code>t_change</code> <span class="math inline">=t</span> (a new candidate; restart the timer);</li>
+<li>otherwise, if the raw level differs from <code>state</code> and <span class="math inline">t-t_{\text{change}}\ge W</span>: accept it (<code>state</code> changes; report one event).</li>
+</ul>
+<p>That is the whole algorithm (<code>Debouncer.update</code> in <code>node_fsm.py</code>; the Arduino sketch uses the same lines). Its behaviour follows from the rule. <em>Event latency</em> is the settling time plus <span class="math inline">W</span>: in Figure 1 (left) about <span class="math inline">18+20=38</span> ms after the press began. <em>False events</em> vanish once <span class="math inline">W</span> exceeds the longest quiet gap inside the chatter: the figure’s right panel shows 2.29 events per press at <span class="math inline">W=1</span> ms, 1.17 at 2 ms, and 1.00 from 5 ms (the chatter in our model lasts up to about 8 ms, but its quiet gaps are much shorter). <em>Lost events</em> appear when the press itself is shorter than <span class="math inline">W</span> plus the settling: with press durations uniform from 15 to 200 ms, 1.3% of presses are lost at <span class="math inline">W=10</span> ms, 5.3% at 20 ms, 10.7% at 30 ms and 22.7% at 60 ms (a first-order estimate for large <span class="math inline">W</span> is <span class="math inline">(W-15)/185</span>: 24% at 60 ms against the measured 22.7%). A typical choice of 10 to 20 ms follows the chatter of ordinary switches; a game controller for fast taps uses less.</p>
+<h4 id="polling-versus-interrupts">3.3.2 Polling versus interrupts</h4>
+<p>Take the rover’s encoder at 0.5 m/s: with 1320 counts per wheel revolution and 0.157 mm per count (Unit 3), the two A/B lines change state 3183 times per second, once every 314 <span class="math inline">\mu</span>s. A main loop that <em>polls</em> the pins reads them at a rate <span class="math inline">f_p</span>. If <span class="math inline">f_p</span> is above the transition rate every transition is seen (at most one transition falls between two reads). If <span class="math inline">f_p</span> is below it, transitions are skipped, and the decoder of Unit 3 either meets an illegal two-bit jump (and ignores it) or, worse, sees a jump that <em>looks like</em> a legal move in the other direction. This is <strong>aliasing</strong> (Unit 3) in an unfamiliar place. Simulating a constant-speed encoder read at different polling rates and decoding the polled samples:</p>
+<table>
+<caption>counts of a 3183 transitions-per-second encoder read by polling for one second. Below 3183 Hz the count is wrong; at 1000 Hz the pair of bits advances about 3.18 steps per read, which the decoder reads as roughly one step <em>backwards</em> per sample, so the count goes <strong>negative</strong>. Prediction 2 of Section 2 is answered: it can come out negative.</caption>
+<thead>
+<tr>
+<th style="text-align: right;">polling rate (Hz)</th>
+<th style="text-align: right;">counted</th>
+<th style="text-align: right;">true</th>
+<th style="text-align: right;">illegal jumps</th>
+<th style="text-align: right;">error</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;"><span class="math inline">-183</span></td>
+<td style="text-align: right;">3177</td>
+<td style="text-align: right;">316</td>
+<td style="text-align: right;"><span class="math inline">-105.8\%</span></td>
+</tr>
+<tr>
+<td style="text-align: right;">1000</td>
+<td style="text-align: right;"><span class="math inline">-816</span></td>
+<td style="text-align: right;">3180</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;"><span class="math inline">-125.7\%</span></td>
+</tr>
+<tr>
+<td style="text-align: right;">2000</td>
+<td style="text-align: right;">817</td>
+<td style="text-align: right;">3181</td>
+<td style="text-align: right;">1182</td>
+<td style="text-align: right;"><span class="math inline">-74.3\%</span></td>
+</tr>
+<tr>
+<td style="text-align: right;">3000</td>
+<td style="text-align: right;">2816</td>
+<td style="text-align: right;">3182</td>
+<td style="text-align: right;">183</td>
+<td style="text-align: right;"><span class="math inline">-11.5\%</span></td>
+</tr>
+<tr>
+<td style="text-align: right;">3500</td>
+<td style="text-align: right;">3182</td>
+<td style="text-align: right;">3182</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.0%</td>
+</tr>
+<tr>
+<td style="text-align: right;">4000</td>
+<td style="text-align: right;">3182</td>
+<td style="text-align: right;">3182</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.0%</td>
+</tr>
+<tr>
+<td style="text-align: right;">8000</td>
+<td style="text-align: right;">3182</td>
+<td style="text-align: right;">3182</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.0%</td>
+</tr>
+</tbody>
+</table>
+<p>The remedy is the <strong>interrupt</strong>: the hardware calls a short handler on every edge, so no transition is missed however slow the main loop is. Its cost is CPU time: transitions per second times the handler’s duration. With an assumed 5 <span class="math inline">\mu</span>s handler the load is <span class="math inline">3183\times5\ \mu\text{s}=1.59\%</span> at 0.5 m/s and 9.5% at 3 m/s; with a sloppy 20 <span class="math inline">\mu</span>s handler 6.4% and 38.2% (Figure 2, right). <strong>Keep handlers tiny: increment a counter and return.</strong> Many chips can also count pulses in dedicated hardware with no CPU load at all.</p>
+<figure>
+<img src="../assets/fig/u4/fig02_polling.png" style="width:95.0%" alt="Left: error in the decoded count of a 3183 transitions-per-second encoder against the polling rate (log scale). Below the transition rate (dotted) the count is wrong, and at 500 and 1000 Hz it is more than 100% wrong (negative). From 3500 Hz up, no error. Right: share of CPU time used by an interrupt handler against rover speed, for an assumed 5 \mus and 20 \mus handler." />
+<figcaption aria-hidden="true">Left: error in the decoded count of a 3183 transitions-per-second encoder against the polling rate (log scale). Below the transition rate (dotted) the count is wrong, and at 500 and 1000 Hz it is more than 100% wrong (negative). From 3500 Hz up, no error. Right: share of CPU time used by an interrupt handler against rover speed, for an assumed 5 <span class="math inline">\mu</span>s and 20 <span class="math inline">\mu</span>s handler.</figcaption>
+</figure>
+<h4 id="super-loop-versus-preemption-how-long-can-control-be-starved">3.3.3 Super-loop versus preemption: how long can control be starved?</h4>
+<p>The rover’s speed controller (Unit 9) wants to run every 10 ms and needs 0.2 ms each time. The node also reads a sensor every second (5 ms) and publishes over Wi-Fi once a minute. Suppose that publish <em>blocks</em> for 300 ms (an assumed typical blocking time of a synchronous network call). In a super-loop, nothing else runs while it does: simulating 120 s, the control task’s longest gap is <strong>305.2 ms</strong>, against 10.0 ms when every task is short (Figure 6, left). Only 2 of 11,999 gaps exceed 20 ms (the two publishes), which is why the bug is easy to miss in testing. At 0.5 m/s the rover travels <span class="math inline">0.5\times0.3052=15.3</span> cm blind during the longest gap, against 0.5 cm for a 10 ms gap. Requirement R3 of Unit 1 asks for a blind distance under 5 cm (a loop under 100 ms): <strong>the super-loop with a blocking publish violates R3 by a factor of three</strong>, rarely and silently. There are three remedies: make the network call non-blocking (an FSM that returns control between steps, as in Section 3.4.3), run it as a lower-priority task under an RTOS (the controller preempts it), or give the networking to a second core or a second chip.</p>
+<h3 id="tier-4-hard-buses-the-nodes-state-machine-and-what-retries-cost">3.4 Tier 4 (hard): buses, the node’s state machine, and what retries cost</h3>
+<h4 id="uart-two-wires-and-an-agreement-on-time">3.4.1 UART: two wires and an agreement on time</h4>
+<p>A <strong>UART</strong> sends bytes over one wire with no clock. Both ends must agree on the <strong>baud rate</strong> (bits per second). The line idles high. A frame (the common 8N1 format: 8 data bits, no parity, 1 stop bit) is a start bit (0), eight data bits least significant first, and a stop bit (1): 10 bits for one byte, so 115,200 baud carries <span class="math inline">115{,}200/10=11{,}520</span> bytes per second, each byte lasting 86.8 <span class="math inline">\mu</span>s. The receiver sees the falling edge of the start bit, waits half a bit time and then samples at the <em>middle</em> of each bit time of its own clock.</p>
+<p><em>How wrong may the receiver’s clock be?</em> Let the receiver’s bit time be <span class="math inline">(1+\delta)</span> times the sender’s, in units of the sender’s bit time. The receiver samples data bit <span class="math inline">i</span> (<span class="math inline">i=0\dots7</span>) at time <span class="math inline">(1.5+i)(1+\delta)</span> and the stop bit at <span class="math inline">9.5(1+\delta)</span>, while the sender’s bit <span class="math inline">k</span> occupies <span class="math inline">[k,k+1)</span> and the stop bit is bit 9. Each sample must land inside its own bit. For the stop bit, <span class="math inline">9\le9.5(1+\delta)&lt;10</span> gives <span class="math display"> -\frac{0.5}{9.5}\le\delta&lt;\frac{0.5}{9.5}\quad\Longleftrightarrow\quad|\delta|\lesssim5.26\%. \tag{1}</span> The same arithmetic for the last data bit (index 8 in the frame, sampled at <span class="math inline">8.5(1+\delta)&lt;9</span>) gives <span class="math inline">\delta&lt;1/17=5.88\%</span> on the fast side, because a receiver that runs <em>fast</em> samples the stop bit late, in the idle high level, where it still reads 1 and hides the error; the data bit is then the first to go. The simulation finds exactly these edges: with random bytes, the first wrong byte appears at <span class="math inline">+5.885\%</span> and <span class="math inline">-5.265\%</span> (the formula: <span class="math inline">+5.882\%</span> and <span class="math inline">-5.263\%</span>), and the byte error rate is 0 at <span class="math inline">\pm4\%</span> and 47.9% at <span class="math inline">+6\%</span> and 73.9% at <span class="math inline">-6\%</span>. For the byte 0x5A (whose last data bit is 0), a receiver 6% fast reads 218 (0xDA): the last bit flipped from 0 to 1. Prediction 3 of Section 2: no, 6% is already too much for some bytes. In practice the margin is smaller than <span class="math inline">\pm5\%</span> because the start edge is found with some jitter and the line has noise: designs aim for under about 2 to 3 percent total mismatch. <strong>A bare RC oscillator inside a chip (a few percent off, and temperature dependent) is not good enough for a UART; a crystal (about 0.005 percent) is.</strong></p>
+<figure>
+<img src="../assets/fig/u4/fig03_uart.png" style="width:95.0%" alt="Left: the percentage of random bytes received wrongly against receiver clock mismatch (8N1). Zero error within \pm5\%; errors begin at -5.26\% and +5.88\% (dotted). Right: the transmitted frame of 0x5A (grey) and the receiver’s sample points (triangles) at mismatches of 0, +4 and +6 percent: at +6 percent the last sample slips into the stop bit and the byte reads 218 instead of 90." />
+<figcaption aria-hidden="true">Left: the percentage of random bytes received wrongly against receiver clock mismatch (8N1). Zero error within <span class="math inline">\pm5\%</span>; errors begin at <span class="math inline">-5.26\%</span> and <span class="math inline">+5.88\%</span> (dotted). Right: the transmitted frame of 0x5A (grey) and the receiver’s sample points (triangles) at mismatches of 0, +4 and +6 percent: at +6 percent the last sample slips into the stop bit and the byte reads 218 instead of 90.</figcaption>
+</figure>
+<h4 id="i2c-and-spi">3.4.2 I2C and SPI</h4>
+<p><strong>I2C</strong> connects many chips with two wires: <strong>SCL</strong> (clock) and <strong>SDA</strong> (data), shared by all devices, each with a 7-bit address. Both lines are <em>open-drain</em>: a device can only pull a line low, and <strong>pull-up resistors</strong> (Unit 2) bring it high. A byte is 8 bits followed by an acknowledge bit (9 clocks). Reading a 16-bit register takes: START, address with write bit (9 clocks), register number (9), a repeated START, address with read bit (9), two data bytes (18), STOP: counting the three START/STOP conditions as one clock each gives <span class="math inline">3+27+9n=48</span> clocks for <span class="math inline">n=2</span> bytes (one byte: 39; six bytes: 84). At 100 kHz that is 480 <span class="math inline">\mu</span>s, at 400 kHz 120 <span class="math inline">\mu</span>s (Figure 4, right); reading it ten times a second occupies the bus for 0.48% of the time.</p>
+<p><em>The pull-up limits the speed.</em> A line is pulled low actively but rises only through the pull-up charging the bus capacitance <span class="math inline">C</span>. This is the RC circuit of Unit 2: the voltage rises as <span class="math inline">V(1-e^{-t/\tau})</span> with <span class="math inline">\tau=RC</span>. The I2C specification measures the rise from 30% to 70% of the supply, which takes <span class="math inline">\tau\ln(0.7/0.3)=0.8473\,RC</span>. For <span class="math inline">R=4.7\ \text{k}\Omega</span> and an assumed <span class="math inline">C=100</span> pF the rise time is 398 ns; for <span class="math inline">C=400</span> pF it is 1593 ns. With assumed limits of 1000 ns (standard mode, 100 kHz) and 300 ns (fast mode, 400 kHz), the largest pull-up is <span class="math inline">R_{\max}=t_r/(0.8473\,C)</span>: 11.8 k<span class="math inline">\Omega</span> and 3.54 k<span class="math inline">\Omega</span> at 100 pF; <strong>2.95 k<span class="math inline">\Omega</span> and 885 <span class="math inline">\Omega</span> at 400 pF</strong>. A long wire or many devices (large <span class="math inline">C</span>) forces a smaller pull-up, and a smaller pull-up draws more current when the line is low: <span class="math inline">3.3/4.7\ \text{k}\Omega=0.70</span> mA. Speed, capacitance and power form a triangle. (Treat the 1000 ns and 300 ns limits as typical values from memory of the specification: check the document before building a board.)</p>
+<p><strong>SPI</strong> uses four wires (clock, two data lines, a chip-select per device) with no addresses and no pull-ups; it is faster (tens of MHz) and simpler, but needs one more pin per device. UART: two devices, no clock; I2C: many devices, two wires, moderate speed; SPI: few fast devices, more wires.</p>
+<figure>
+<img src="../assets/fig/u4/fig04_i2c.png" style="width:95.0%" alt="Left: the 30% to 70% rise time of an I2C line against the pull-up resistance for two assumed bus capacitances (100 pF and 400 pF), with the assumed 1000 ns and 300 ns limits. At 400 pF a 4.7 k\Omega pull-up gives 1593 ns, too slow even for standard mode. Right: time to read 1, 2 and 6 bytes from a register at 100 kHz (390, 480 and 840 \mus) and 400 kHz (97.5, 120 and 210 \mus)." />
+<figcaption aria-hidden="true">Left: the 30% to 70% rise time of an I2C line against the pull-up resistance for two assumed bus capacitances (100 pF and 400 pF), with the assumed 1000 ns and 300 ns limits. At 400 pF a 4.7 k<span class="math inline">\Omega</span> pull-up gives 1593 ns, too slow even for standard mode. Right: time to read 1, 2 and 6 bytes from a register at 100 kHz (390, 480 and 840 <span class="math inline">\mu</span>s) and 400 kHz (97.5, 120 and 210 <span class="math inline">\mu</span>s).</figcaption>
+</figure>
+<h4 id="the-sensor-node-as-a-state-machine">3.4.3 The sensor node as a state machine</h4>
+<p>The node’s cycle from Unit 2 becomes an FSM (Figure 5, the class <code>NodeFSM</code>): <strong>SENSE</strong> (burst of 20 readings, Unit 3) <span class="math inline">\to</span> <strong>CONNECT</strong> (Wi-Fi) <span class="math inline">\to</span> <strong>PUBLISH</strong> (send the reading) <span class="math inline">\to</span> <strong>SLEEP</strong> (deep sleep for the rest of the 60 s period). When CONNECT or PUBLISH fails, the machine goes to <strong>WAIT</strong> for a back-off time, doubling each time (5 s, 10 s), then tries again; after the third failure it gives up and sleeps until the next period. The machine is written as a function <code>handle(event)</code> returning the next action (“read the sensor”, “connect”, “publish”, “wait <span class="math inline">n</span> seconds”, “deep sleep <span class="math inline">n</span> seconds”); the hardware calls are injected, so the same machine is run by the board’s <code>main.py</code> and by <code>pytest</code> with a fake board. <strong>An event that is not allowed in a state raises an error</strong> (a test checks that <code>publish_ok</code> in the initial state does), so impossible transitions cannot pass silently.</p>
+<figure>
+<img src="../assets/fig/u4/fig05_fsm.png" style="width:90.0%" alt="The state machine of the sensor node. Solid arrows are events; the long arc below gives up after the third failure of connecting or publishing; the arc above is the reset that happens when the chip wakes from deep sleep." />
+<figcaption aria-hidden="true">The state machine of the sensor node. Solid arrows are events; the long arc below gives up after the third failure of connecting or publishing; the arc above is the reset that happens when the chip wakes from deep sleep.</figcaption>
+</figure>
+<p><em>Deep sleep and reset.</em> In deep sleep the processor and most memory are off (a few microamperes for the chip alone: our assumed 0.01 mA); on wake the chip <strong>resets</strong> and runs <code>main.py</code> from the start. So there is no state to resume: the FSM’s SLEEP state is the end of the program, and anything to be remembered (such as a failure counter) must be kept in the small memory that survives deep sleep. A sleep timer built on the chip’s internal RC oscillator is only a few percent accurate (assumed typical), so a “60 s” sleep may last 57 to 63 s: fine for reporting, not for a precise schedule.</p>
+<p><em>What do retries cost?</em> Use the assumed currents of Unit 2 (wake and read: 50 mA, 0.2 s; successful connect: 100 mA, 0.5 s; publish: 140 mA, 0.3 s; shutdown: 50 mA, 0.2 s; sleep 0.01 mA), and assume a failed connect attempt costs a <strong>3 s timeout</strong> at 100 mA = 300 mA s, which is <strong>3.3 times</strong> the 92 mA s of a successful connect and publish. If each attempt fails with probability <span class="math inline">p</span> and the node makes at most <span class="math inline">M</span> attempts, attempt <span class="math inline">k</span> is reached with probability <span class="math inline">p^{k-1}</span>, so the expected charge per cycle is the fixed part (wake and shutdown: 20 mA s) plus <span class="math inline">\sum_{k=1}^{M}p^{k-1}\big[(1-p)\,S+p\,C_f\big]</span> plus the back-off waits <span class="math inline">\sum_{k&lt;M}p^{k}\,i_w\,b_k</span>, where <span class="math inline">S=92</span> mA s, <span class="math inline">C_f=300</span> mA s, <span class="math inline">i_w</span> is the current while waiting, <span class="math inline">b_k=5\cdot2^{k-1}</span> s, and delivery succeeds with probability <span class="math inline">1-p^M</span>. The module’s <code>expected_node</code> is this formula; <code>simulate_node</code> runs the <em>actual</em> <code>NodeFSM</code> against random failures. For <span class="math inline">p=0.2</span>, <span class="math inline">M=3</span> and idle back-off at 20 mA, 20,000 simulated cycles give 3.549 mA and 99.26% delivery against the formula’s 3.571 mA and 99.20% (0.6% apart), and 3.31 s awake per cycle against 3.34 s.</p>
+<table>
+<caption>battery life (2000 mAh, 80% usable; days) and delivery for three retry policies against the failure probability <span class="math inline">p</span> (assumed currents; light-sleep wait assumed at 1 mA). With no failures the life is 35.5 days (Unit 2). Retries buy delivery at a price in battery that grows quickly with <span class="math inline">p</span>.</caption>
+<colgroup>
+<col style="width: 13%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">policy</th>
+<th style="text-align: right;"><span class="math inline">p=0.05</span></th>
+<th style="text-align: right;"><span class="math inline">p=0.1</span></th>
+<th style="text-align: right;"><span class="math inline">p=0.2</span></th>
+<th style="text-align: right;"><span class="math inline">p=0.3</span></th>
+<th style="text-align: right;"><span class="math inline">p=0.5</span></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">no retry: life (days)</td>
+<td style="text-align: right;">32.5</td>
+<td style="text-align: right;">30.0</td>
+<td style="text-align: right;">25.9</td>
+<td style="text-align: right;">22.9</td>
+<td style="text-align: right;">18.5</td>
+</tr>
+<tr>
+<td style="text-align: left;">no retry: delivered (%)</td>
+<td style="text-align: right;">95.0</td>
+<td style="text-align: right;">90.0</td>
+<td style="text-align: right;">80.0</td>
+<td style="text-align: right;">70.0</td>
+<td style="text-align: right;">50.0</td>
+</tr>
+<tr>
+<td style="text-align: left;">3 attempts, idle back-off: life</td>
+<td style="text-align: right;">29.9</td>
+<td style="text-align: right;">25.4</td>
+<td style="text-align: right;">18.7</td>
+<td style="text-align: right;">14.1</td>
+<td style="text-align: right;">8.6</td>
+</tr>
+<tr>
+<td style="text-align: left;">3 attempts, light-sleep back-off: life</td>
+<td style="text-align: right;">31.1</td>
+<td style="text-align: right;">27.3</td>
+<td style="text-align: right;">21.3</td>
+<td style="text-align: right;">16.8</td>
+<td style="text-align: right;">10.9</td>
+</tr>
+<tr>
+<td style="text-align: left;">3 attempts: delivered (%)</td>
+<td style="text-align: right;">99.99</td>
+<td style="text-align: right;">99.9</td>
+<td style="text-align: right;">99.2</td>
+<td style="text-align: right;">97.3</td>
+<td style="text-align: right;">87.5</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="../assets/fig/u4/fig06_policy.png" style="width:95.0%" alt="Left: the longest gap between runs of a 10 ms control task, for preemptive scheduling (10 ms), a super-loop with only short tasks (10 ms) and a super-loop with a blocking 300 ms publish (305 ms), against the 100 ms limit of R3. Right: delivery per cycle against battery life for three retry policies as the failure probability goes from 0 to 0.5 (the battery axis is reversed so that “better” is up and to the right)." />
+<figcaption aria-hidden="true">Left: the longest gap between runs of a 10 ms control task, for preemptive scheduling (10 ms), a super-loop with only short tasks (10 ms) and a super-loop with a blocking 300 ms publish (305 ms), against the 100 ms limit of R3. Right: delivery per cycle against battery life for three retry policies as the failure probability goes from 0 to 0.5 (the battery axis is reversed so that “better” is up and to the right).</figcaption>
+</figure>
+<p><strong>Requirement R4 (30 days) is now at risk from failures, not only from awake time.</strong> With the 3 s timeout, even without retries life is 30.0 days at <span class="math inline">p=0.1</span> and falls below 30 days beyond it, and with three attempts a failure rate of 5% already gives 29.9 days (idle wait) or 31.1 days (light-sleep wait). The cost is dominated by the <em>length of the failed attempt</em>: shorten the timeout from 3 s to 1 s (assumed to be adequate for a connect that normally takes 0.5 s) and the life at <span class="math inline">p=0.2</span> with three attempts and light-sleep wait rises from 21.3 to 29.0 days, and without retries from 25.9 to 35.0 days. <strong>A timeout is an energy parameter.</strong> A policy that is right depends on how often failures happen: measure <span class="math inline">p</span> on the real network before choosing <span class="math inline">M</span>.</p>
+<h4 id="micropython-and-arduino-c">3.4.4 MicroPython and Arduino C++</h4>
+<p>The two common ways to program an ESP32 are <strong>MicroPython</strong> (Python on the chip: short programs, a live console, slower and with less memory control) and <strong>Arduino C++</strong> (compiled: faster, smaller, more libraries for exotic parts). The course uses MicroPython for the node because the logic is the point; the Arduino sketch of the same debounce is in <code>firmware/arduino/button_fsm.ino</code>. The structure that makes the course’s code testable: <em>all logic in a pure file</em> (<code>node_fsm.py</code>: no imports, only ints, tuples and lists, so it runs under MicroPython and CPython alike), <em>hardware behind one small object</em> (<code>read_sensor</code>, <code>wifi_connect</code>, <code>publish</code>, <code>sleep_s</code>, <code>deep_sleep</code>), and a <em>thin</em> <code>main.py</code> that wires the two. The tests run <code>run_cycle</code> with a fake hardware object that scripts a Wi-Fi failure followed by a success and check that the actions are exactly <code>read_sensor, wifi_connect, wait, wifi_connect, publish, deep_sleep</code> with a 5 s back-off.</p>
+<h3 id="tier-5-hardest-open-questions">3.5 Tier 5 (hardest): open questions</h3>
+<ol type="1">
+<li><strong>How would you prove the debouncer correct?</strong> Its guarantee is “an event is reported only for a level stable for <span class="math inline">W</span> ms”. State the guarantee for a signal that chatters <em>during</em> the stable period, and say what a hardware (RC plus Schmitt trigger) debouncer guarantees instead.</li>
+<li><strong>Interrupt latency and priority.</strong> Two interrupts (encoder edge, timer tick) can fire together. What happens to a handler that runs longer than the interval between edges? Derive the longest permitted handler time at 3 m/s (Figure 2: 9.5% at 5 <span class="math inline">\mu</span>s).</li>
+<li><strong>A watchdog.</strong> If the node hangs in WAIT forever (a missed event), the battery drains. A <em>watchdog timer</em> resets the chip unless the program feeds it regularly. Where in the FSM would you feed it, and what is the longest legitimate time between feeds?</li>
+</ol>
+<h2 id="apply">4. Apply</h2>
+<h3 id="worked-problems">4.1 Worked problems</h3>
+<p><strong>Problem 1 (timer arithmetic).</strong> A timer clock of 80 MHz is divided by a prescaler of 40. How long is one tick, how long until a 16-bit counter wraps, and how many steps does a 500 Hz PWM have?</p>
+<p><em>Solution.</em> Tick rate <span class="math inline">80\ \text{MHz}/40=2</span> MHz, so a tick is 0.5 <span class="math inline">\mu</span>s; the counter wraps after <span class="math inline">65{,}536\times0.5\ \mu\text{s}=32.8</span> ms; a 500 Hz PWM has a period of 2 ms <span class="math inline">=4000</span> ticks, so 4000 duty steps (about 12 bits).</p>
+<p><strong>Problem 2 (debounce choice).</strong> The chatter lasts at most 8 ms, and users tap for at least 60 ms. Choose <span class="math inline">W</span> and give the event latency.</p>
+<p><em>Solution.</em> <span class="math inline">W</span> must exceed the chatter’s quiet gaps (so at least 8 ms) and stay below the shortest tap (60 ms); take <span class="math inline">W=20</span> ms. The latency is the settling time plus <span class="math inline">W</span>, at most <span class="math inline">8+20=28</span> ms.</p>
+<p><strong>Problem 3 (polling rate).</strong> The encoder of a rover moving at 1.2 m/s makes how many transitions per second (0.157 mm per count), and what is the slowest safe polling rate?</p>
+<p><em>Solution.</em> <span class="math inline">1.2/0.000157=7643</span> transitions per second; poll above that, with a margin: 10 to 16 kHz. An interrupt handler of 5 <span class="math inline">\mu</span>s would use <span class="math inline">7643\times5\ \mu\text{s}=3.8\%</span> of the CPU.</p>
+<p><strong>Problem 4 (UART).</strong> A link runs at 115,200 baud. How long does a 20-byte message take, and what clock error (both ends together) can it tolerate?</p>
+<p><em>Solution.</em> 20 bytes <span class="math inline">\times</span> 10 bits <span class="math inline">=200</span> bits <span class="math inline">/115{,}200=1.74</span> ms. Total mismatch below about 5%: with a safety margin, design for 2%.</p>
+<p><strong>Problem 5 (I2C).</strong> A bus has 200 pF of capacitance. What is the largest pull-up for 1000 ns, and the rise time of a 4.7 k<span class="math inline">\Omega</span> pull-up?</p>
+<p><em>Solution.</em> <span class="math inline">R_{\max}=1000\times10^{-9}/(0.8473\times200\times10^{-12})=5.9</span> k<span class="math inline">\Omega</span>; for 4.7 k<span class="math inline">\Omega</span>: <span class="math inline">0.8473\times4700\times200\times10^{-12}=797</span> ns, inside 1000 ns but not inside 300 ns.</p>
+<h3 id="code-and-figures">4.2 Code and figures</h3>
+<pre class="python"><code>from node_fsm import NodeFSM, Debouncer, run_cycle
+import fsm_sim as F
+
+d = Debouncer(20, 1)                                   # accept a level after 20 ms stable
+print([d.update(v, t) for v, t in [(1, 0), (0, 1), (1, 3), (0, 5), (0, 30)]][-1])   # (0, True)
+
+class Fake:                                            # a pretend board
+    def read_sensor(self): return &quot;sensor_done&quot;
+    def wifi_connect(self): return &quot;wifi_ok&quot;
+    def publish(self): return &quot;publish_ok&quot;
+    def sleep_s(self, s): pass
+    def deep_sleep(self, s): print(&quot;sleep&quot;, s)
+print(run_cycle(Fake(), NodeFSM(60, 3, 5)))            # read_sensor, wifi_connect, publish, deep_sleep
+
+print(F.expected_node(0.2, 3, 5, 1.0))                 # avg current, delivery, awake seconds</code></pre>
+<p>The module and its README are in <code>codes/embedded/fsm_sim/</code> and the firmware in its <code>firmware/</code> folder. The nine tests check the debouncer (it accepts only stable levels and reports a press once), the removal of false presses on simulated bounce (many raw edges, exactly one press each after debouncing), the FSM paths (success, retry with back-off 5 s then 10 s, give-up, and the error on an illegal event), <code>run_cycle</code> against a fake board, the polling threshold, the UART round trip and tolerance, the I2C numbers, the super-loop gap, and the agreement of <code>expected_node</code> with 20,000-cycle simulations to 3%.</p>
+<p><em>What would look different if the theory were wrong?</em> If equation (1) were wrong, the first failing mismatch would not sit at <span class="math inline">+5.885\%</span> and <span class="math inline">-5.265\%</span>; it does (to the grid of 0.005 percentage points). If the expected-charge formula were wrong, the simulation of the real state machine would not match it; it does within 0.6%.</p>
+<p><em>Two bugs caught on the way.</em> Figure 1 first showed a debounced trace that never changed: the figure script had the time and level arguments of a <code>zip</code> swapped, and the debouncer in the module was right. Figure 3 first used the byte 0xA5 for the demonstration, and it was received correctly even at +6%: its last data bit is 1, the same as the stop bit, so the late sample could not see the error. Only bytes whose last bit is 0 fail on the fast side; 0x5A shows it.</p>
+<h2 id="analyze">5. Analyze</h2>
+<p><strong>Limits.</strong> As the debounce time grows the false events vanish and the lost presses grow without bound; as the polling rate rises the count converges to the truth but the CPU load rises with it. At zero mismatch a UART never errs; its tolerance is a hard geometric limit set by 9.5 bit times to the stop bit. As the failure probability <span class="math inline">p\to1</span>, delivery <span class="math inline">\to0</span> and the battery <span class="math inline">\to</span> the cost of <span class="math inline">M</span> failed attempts per cycle.</p>
+<p><strong>Dominance.</strong> In the retry table, at <span class="math inline">p\ge0.2</span> the cost of <em>failed attempts and waiting</em> dominates the node’s budget; at <span class="math inline">p\le0.05</span> it is under 15 percent. For polling, the dominant term is the ratio of poll rate to transition rate: nothing else matters below 1, nothing is gained above a few times it.</p>
+<p><strong>Order-of-magnitude estimate.</strong> A 300 ms blocking call at 0.5 m/s is 15 cm blind: speed times blocking time, before running anything.</p>
+<p><strong>Sensitivity.</strong> The retry cost depends mostly on the timeout of a failed attempt: reducing it from 3 s to 1 s moves life at <span class="math inline">p=0.2</span> (no retry) from 25.9 to 35.0 days, a 35% gain from one parameter.</p>
+<p><strong>Failure modes.</strong> (1) <em>A blocking call in the main loop</em>: control starved (R3). (2) <em>Polling an encoder too slowly</em>: counts lost or reversed. (3) <em>Long interrupt handlers</em>: other events delayed. (4) <em>Floating inputs</em>: random events (Unit 2). (5) <em>An FSM with no timeout in a waiting state</em>: the node hangs and drains its battery (add a watchdog). (6) <em>Clock mismatch on a UART</em>: garbled bytes, worst for some patterns only. (7) <em>Too-large I2C pull-ups on long wires</em>: edges too slow, intermittent errors. (8) <em>Resets lose state</em>: after deep sleep nothing is remembered unless stored.</p>
+<p><strong>Items used from the pedagogy checklist:</strong> limits, dominance, estimate, sensitivity, failure modes, convergence (the Monte Carlo agrees with the formula), invariants (illegal events raise errors; the first-failure mismatches match theory), constructed-versus-measured (all hardware timings are assumed; the logic is exact).</p>
+<h2 id="evaluate">6. Evaluate</h2>
+<p><strong>MCU versus SBC.</strong> The MCU wins on power, determinism and cost for sensing, actuation and battery operation; the SBC wins on computation and software ecosystem. A rover usually needs both, joined by a serial link (UART or SPI): an MCU runs the 10 ms control loop and encoder interrupts; the SBC plans paths and talks to the cloud. This split also answers Section 3.3.3: put the blocking, slow code on the SBC.</p>
+<p><strong>Super-loop versus RTOS versus event-driven FSM.</strong> A super-loop is easiest to write and debug and is adequate if every task is short. An RTOS adds preemption (Section 3.3.3), memory use and scheduling bugs (priority inversion, shared data), but it isolates a slow task from a fast one. A non-blocking FSM driven by timers and interrupts gets most of the benefit without an RTOS and is how the node is written.</p>
+<p><strong>Hardware versus software debouncing.</strong> An RC filter with a Schmitt trigger (a gate with two thresholds, the analog twin of hysteresis in Unit 1) costs two parts and no CPU time, but a fixed delay; software debouncing costs a timer and some code but is adjustable. Many boards do both.</p>
+<p><strong>Polling versus interrupt versus hardware counter.</strong> Polling is fine for slow human inputs; interrupts for pulses up to the kilohertz range; a hardware pulse counter for anything faster, at no CPU cost.</p>
+<p><strong>Retry policy.</strong> More attempts raise delivery but cost battery (Table above); the right <span class="math inline">M</span>, timeout and wait mode depend on how often the network fails. The robust approach is to <em>measure</em> <span class="math inline">p</span>, then choose.</p>
+<p><strong>Context.</strong> The finite-state machine, the oldest idea in this Unit, comes from digital logic and compilers; its value in embedded work is that it makes the failure cases visible. <strong>When NOT to use an FSM:</strong> for a computation (a filter, a controller), where the code is a formula, not a set of modes.</p>
+<p><strong>Honesty about this Unit’s numbers.</strong> The algorithms, formulas and counts (debouncing, polling, UART tolerance, the I2C clock count, the retry expectation) are exact for the models and were tested against simulations. The <em>physical</em> numbers (chatter duration, handler time, node currents, 3 s timeout, connect times, I2C limits, sleep-timer accuracy) are assumptions. The firmware that talks to hardware was not executed.</p>
+<h2 id="create">7. Create</h2>
+<div class="create" title="What you can build from this">
+<ol type="1">
+<li><strong>Make the debouncer adaptive.</strong> Measure the chatter of a real button on a board (or of the simulator with a longer settle time) and choose <span class="math inline">W</span> from the data; plot lost presses against <span class="math inline">W</span>.</li>
+<li><strong>Add a watchdog to the FSM.</strong> Extend <code>NodeFSM</code> with a limit on the time in WAIT and test it with a fake board that never sends <code>waited</code>.</li>
+<li><strong>Find the best timeout.</strong> Using <code>expected_node</code>, search the connect timeout and the number of attempts that maximise battery life subject to 99% delivery at <span class="math inline">p=0.2</span>.</li>
+<li><strong>Combine with Unit 3.</strong> Feed the encoder A/B signals through the interrupt model and compute the speed estimate with a 100 ms window; report the CPU load at 3 m/s.</li>
+<li><strong>Could become a package module:</strong> <code>iotrobotics.embedded</code> with <code>Debouncer</code>, <code>NodeFSM</code>, <code>run_cycle</code> and the timing calculators, reused by the rover firmware in Units 9 and 11.</li>
+</ol>
+</div>
+<p><strong>Running project, Layer 3: node firmware as a state machine.</strong> The soil node is now a tested state machine (<code>NodeFSM</code>) with a burst-averaging sense step, a connect step with a bounded retry, deep sleep between reports, and a thin MicroPython <code>main.py</code> (not run on hardware). Updated requirements:</p>
+<table>
+<caption>running-project requirements updated by Unit 4. The 0.5 s connect time of Unit 2 is still an assumption: the node cannot be said to meet R4 until it is measured on a board.</caption>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">id</th>
+<th style="text-align: left;">requirement</th>
+<th style="text-align: left;">status after Unit 4</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">R4</td>
+<td style="text-align: left;">soil node lasts at least 30 days</td>
+<td style="text-align: left;">35.5 days with no failures (Unit 2, assumed 0.5 s connect); <strong>at risk</strong>: with failures the life depends on the timeout; with a 1 s timeout and <span class="math inline">p=0.2</span>, three attempts: 29.0 days; no retry: 35.0 days</td>
+</tr>
+<tr>
+<td style="text-align: left;">R3</td>
+<td style="text-align: left;">rover stops before an obstacle: loop under 100 ms</td>
+<td style="text-align: left;"><strong>violated</strong> by a blocking 300 ms publish in a super-loop (305 ms gap, 15.3 cm blind); met if networking is non-blocking or on another core or chip</td>
+</tr>
+<tr>
+<td style="text-align: left;">R14 (new)</td>
+<td style="text-align: left;">the node delivers at least 99% of its readings</td>
+<td style="text-align: left;">99.2% with three attempts at <span class="math inline">p=0.2</span>; costs battery (Table above)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R15 (new)</td>
+<td style="text-align: left;">wheel-encoder counts never lost up to 1.2 m/s</td>
+<td style="text-align: left;">interrupts or a hardware counter (7643 transitions per second; polling above 8 kHz is also enough); handler under 5 <span class="math inline">\mu</span>s gives 3.8% CPU</td>
+</tr>
+</tbody>
+</table>
+<h2 id="visualization-lesson">8. Visualization lesson</h2>
+<table>
+<caption>the chart types of this Unit. Ladder: <em>remember</em> the names; <em>understand</em> what each shows; <em>apply</em> the call; <em>analyse</em> how it misleads; <em>evaluate</em> when a table is better (the retry table of Section 3.4.3: the reader wants exact days); <em>create</em> a new one.</caption>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Chart type</th>
+<th style="text-align: left;">Best for</th>
+<th style="text-align: left;">How it misleads</th>
+<th style="text-align: left;">matplotlib call</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">digital signal trace (step plot with offsets)</td>
+<td style="text-align: left;">logic levels and their timing</td>
+<td style="text-align: left;">stacking rows with offsets loses absolute levels; label each row</td>
+<td style="text-align: left;"><code>ax.step(t, level + offset, where="post")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">dual-axis trade-off plot</td>
+<td style="text-align: left;">two opposing quantities against one parameter (events counted, presses lost against <span class="math inline">W</span>)</td>
+<td style="text-align: left;">the crossing point depends on the axis ranges; state both axes’ meaning</td>
+<td style="text-align: left;"><code>ax.plot(...)</code>, <code>ax.twinx()</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">error against rate on a semilog axis</td>
+<td style="text-align: left;">a threshold phenomenon over decades (polling rate)</td>
+<td style="text-align: left;">a smooth line between points suggests a gradual change; mark the threshold</td>
+<td style="text-align: left;"><code>ax.semilogx(x, y, "o-")</code>, <code>ax.axvline(x0, ls=":")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">sample points on a waveform</td>
+<td style="text-align: left;">showing where a receiver samples relative to the bits</td>
+<td style="text-align: left;">triangles can hide the waveform they sit on; keep rows separate</td>
+<td style="text-align: left;"><code>ax.step(...)</code>, <code>ax.plot(ts, y, "v")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">state diagram</td>
+<td style="text-align: left;">modes and transitions</td>
+<td style="text-align: left;">a diagram shows the paths, not their probabilities or costs; add them in a table</td>
+<td style="text-align: left;"><code>FancyBboxPatch</code>, <code>FancyArrowPatch</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">trade-off (Pareto-style) scatter</td>
+<td style="text-align: left;">choosing between policies by two outcomes (battery against delivery)</td>
+<td style="text-align: left;">reversing an axis so “better” is up-right confuses a first reader; say so in the caption</td>
+<td style="text-align: left;"><code>ax.plot(life, delivery, "o-")</code>, <code>ax.invert_xaxis()</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">bar of a worst case</td>
+<td style="text-align: left;">the longest gap, not the average</td>
+<td style="text-align: left;">a bar of the worst case hides how rare it is (2 gaps of 11,999); print the rarity</td>
+<td style="text-align: left;"><code>ax.bar(x, v)</code>, <code>ax.axhline(limit)</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading Figure 6 (left) as a chart.</strong> A bar of the longest gap is the right summary here, because a control loop fails on its worst gap, not on its mean; the two 305 ms gaps are invisible in an average, which is what makes the bug hard to find.</p>
+<h2 id="problem-set">9. Problem set</h2>
+<div class="exercise" title="Graded exercises">
+<ol type="1">
+<li>(easy) A 16-bit timer ticks at 1 MHz. How long until it wraps, and what prescaler from 80 MHz gives that tick?</li>
+<li>(medium) A button chatters for at most 5 ms and users tap for at least 40 ms. Choose a debounce time and give the event latency and the largest tap-length you would still catch.</li>
+<li>(medium-hard) An encoder has 2000 counts per revolution and the wheel turns at 8 revolutions per second. Find the transition rate, the slowest safe polling rate (with a 2x margin) and the CPU load of a 6 <span class="math inline">\mu</span>s interrupt handler.</li>
+<li>(hard) Derive the baud-rate tolerance for a UART with a 9-bit data frame (start, 9 data bits, one stop bit). How does it compare with 8N1?</li>
+<li>(hardest) Using the closed-form <code>expected_node</code> and the assumed currents, find the connect timeout <span class="math inline">t_f</span> for which three attempts with light-sleep back-off (1 mA) at <span class="math inline">p=0.2</span> gives exactly 30 days, and the delivery at that point.</li>
+</ol>
+</div>
+<h2 id="retrieval-practice-and-recap">10. Retrieval practice and recap</h2>
+<p><strong>Answers to the Section 2 predictions.</strong></p>
+<ol type="1">
+<li>About 6 (5.81 falling edges per press on average, in the simulation).</li>
+<li>It can come out negative: at 1000 Hz the decoded count was <span class="math inline">-816</span> against a true <span class="math inline">+3180</span>.</li>
+<li>No: at +6% about half of random bytes are received wrongly (47.9%); the tolerance is about <span class="math inline">\pm5\%</span> and in practice less.</li>
+</ol>
+<p><strong>Answers to the Section 2 recall quiz.</strong></p>
+<ol type="1">
+<li>An MCU runs one dedicated program directly on pins, starts in milliseconds and can sleep at microamperes; an SBC runs a full operating system and draws watts.</li>
+<li>It reacts to an event immediately, however busy the main loop is, so no fast event is missed.</li>
+<li>A longer debounce removes more chatter but loses quick taps and delays every event.</li>
+<li>That the line returned to idle (a framing check): a stop bit read as 0 tells the receiver it is out of step.</li>
+<li>In deep sleep (about 98% of the time); while awake it must not block, or the loop (and anything depending on it) stalls.</li>
+</ol>
+<p><strong>Explain it to a friend.</strong></p>
+<ul>
+<li>Why does one press of a button look like several presses to a microcontroller?</li>
+<li>Why can a loop that reads an encoder too slowly count backwards?</li>
+<li>Why can a longer timeout on a failed Wi-Fi connection shorten a battery’s life?</li>
+</ul>
+<p><strong>Re-derive by hand tomorrow, without looking:</strong> (a) the UART tolerance of 5.26% from the stop-bit sample time; (b) the expected charge per cycle for <span class="math inline">M</span> attempts with failure probability <span class="math inline">p</span>; (c) the I2C rise time <span class="math inline">0.8473\,RC</span> and the maximum pull-up for a given rise time and capacitance.</p>
+<h2 id="where-next">11. Where next</h2>
+<ul>
+<li><strong>Unit 5</strong> gives the node a language: how the 60 s reading actually travels, with MQTT topics, quality-of-service levels, retained messages and last will, and a small broker and client of our own, checked against a real MQTT library.</li>
+<li>Terms named here but not taught: MQTT and Wi-Fi (Unit 5), watchdog timer and DMA (named), PID (Unit 9). They are registered in CURRICULUM.md.</li>
+<li><strong>Open threads:</strong> the firmware that touches hardware (<code>main.py</code>, Arduino, Wokwi wiring) was not run; all timings and currents are assumed; the 0.5 s connect time of Unit 2 is still an assumption that must be measured on a board; the Wokwi <code>diagram.json</code> pin names are untested.</li>
+</ul>
+<p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u3.html">&larr; Sensors</a><a class="btn" href="u5.html">Networking &rarr;</a></p></article></div></main>
+<footer><div class="wrap">Internet of Things and Robotics crash course · Code is MIT-licensed; PDFs are for study use. Companion to the <a href="../../index.html">Generative AI and LLMs course</a>.</div></footer>
+<script>
+document.getElementById('theme').onclick=function(){var d=document.documentElement,c=d.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'),n=c==='dark'?'light':'dark';d.dataset.theme=n;try{localStorage.setItem('theme',n)}catch(e){}};
+</script>
+<script src="../../assets/vendor/katex/katex.min.js"></script><script>document.querySelectorAll(".math").forEach(function(n){var d=n.classList.contains("display");var t=n.textContent.replace(/^\\[\(\[]|\\[\)\]]$/g,"");try{katex.render(t,n,{displayMode:d,throwOnError:false})}catch(e){}});</script></body></html>

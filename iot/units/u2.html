@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unit 2: Electronics for Embedded Systems: Volts, Amps, Bits and Batteries · IoT and Robotics</title>
+<meta name="description" content="From volts and sensors to MQTT, security, kinematics, control, localisation and navigation, built around one running project: a Smart Greenhouse Rover. Twelve units with a PDF and runnable code each, a 14-lab track and an assessment bank. Built for a B.Tech student; simulation-first, no hardware needed.">
+<link rel="stylesheet" href="../../assets/css/style.css"><link rel="stylesheet" href="../assets/css/iot.css">
+<script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="stylesheet" href="../../assets/vendor/katex/katex.min.css"></head><body>
+<header class="site-head"><div class="wrap">
+<a class="brand" href="../index.html">IoT <span>&amp;</span> Robotics<span class="long"> crash course</span></a>
+<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
+</div></header>
+<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 2</strong><a href="#session-map">Session map</a><a href="#terms-the-term-tree">1. Terms: the term tree</a><a href="#remember">2. Remember</a><a href="#understand-the-derivation">3. Understand: the derivation</a><a href="#apply">4. Apply</a><a href="#analyze">5. Analyze</a><a href="#evaluate">6. Evaluate</a><a href="#create">7. Create</a><a href="#visualization-lesson">8. Visualization lesson</a><a href="#problem-set">9. Problem set</a><a href="#retrieval-practice-and-recap">10. Retrieval practice and recap</a><a href="#where-next">11. Where next</a></aside><article class="doc"><p><span class="chip">Unit 2</span> <span class="chip ">ready</span></p><h1>Electronics for Embedded Systems: Volts, Amps, Bits and Batteries</h1><p class="lede">Ohm&#x27;s law, dividers, LEDs, PWM, ADCs, battery budgets and motor drivers, with numbers.</p><div class="dl"><a class="btn primary" href="../downloads/u2/u2-notes.pdf" download>PDF notes<small>999 KB</small></a><a class="btn" href="../downloads/u2/u2-notes.docx" download>Word (.docx)<small>821 KB</small></a><a class="btn" href="../downloads/u2/u2-code.zip" download>All code (.zip)<small>24 KB</small></a></div><h2 id="session-map">Session map</h2>
+<div class="keyidea" title="Outcome of this session">
+<p>After this session you can:</p>
+<ol type="1">
+<li>use Ohm’s law, power and the two Kirchhoff laws to size a resistor, a voltage divider and an LED current limiter, and say when a divider is spoiled by the load it feeds;</li>
+<li>explain PWM (pulse-width modulation) and an RC filter, and predict the average, the RMS value and the ripple of a smoothed PWM signal;</li>
+<li>explain what an ADC (analog-to-digital converter) does, derive its quantisation error <span class="math inline">q/\sqrt{12}</span> and read a datasheet’s bit count in volts;</li>
+<li>build a duty-cycled power budget for a battery node, find the awake time that meets a battery-life target, and see which state dominates the charge;</li>
+<li>size a DC motor and its H-bridge driver for the rover from a speed, an acceleration and a supply voltage, and see why the driver’s voltage drop can decide the design.</li>
+</ol>
+</div>
+<ul>
+<li><strong>Prerequisites:</strong> Unit 1 (duty cycle, time constant, first-order response, the battery-life formula). Algebra, a little calculus (one integral). No electronics background: voltage, current and resistance are defined in Section 2.</li>
+<li><strong>Difficulty ladder used:</strong> easy → medium → medium-hard → hard (Sections 3.1 to 3.4); the hardest tier is posed as open questions in Section 3.5.</li>
+<li><strong>Deliverables:</strong> this document (.tex, .pdf, .docx), 6 figures, the module <code>codes/electronics/circuits_np/</code> (series/parallel, divider with load, E12 values, LED load line, PWM and RC, ADC, power budget, DC motor and bridge; 8 tests), and the running-project power and drive budget of Section 7.</li>
+<li><strong>Source anchors:</strong> this Unit derives its formulas from stated laws and quotes no paper or datasheet. <strong>All component values (LED, motor, battery, microcontroller currents, bridge drops, rover mass) are assumed round numbers of the right order of magnitude, not measurements of a named part; check a datasheet before building.</strong> Every other number was produced by the scripts in <code>figures/</code> (<code>fig01</code> to <code>fig06</code>, <code>analysis_numbers.py</code>) or the module’s tests.</li>
+</ul>
+<h2 id="terms-the-term-tree">1. Terms: the term tree</h2>
+<table>
+<colgroup>
+<col style="width: 22%" />
+<col style="width: 14%" />
+<col style="width: 37%" />
+<col style="width: 13%" />
+<col style="width: 10%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Term</th>
+<th style="text-align: center;">Symbol</th>
+<th style="text-align: left;">One-line meaning</th>
+<th style="text-align: center;">Where it appears</th>
+<th style="text-align: center;">New / known</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">voltage</td>
+<td style="text-align: center;"><span class="math inline">V</span></td>
+<td style="text-align: left;">electrical “pressure”: energy per unit charge, in volts (V)</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">current</td>
+<td style="text-align: center;"><span class="math inline">I</span></td>
+<td style="text-align: left;">flow of charge, in amperes (A); 1 mA = 0.001 A</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">resistance</td>
+<td style="text-align: center;"><span class="math inline">R</span></td>
+<td style="text-align: left;">how strongly a part opposes current, in ohms (<span class="math inline">\Omega</span>)</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">Ohm’s law</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;"><span class="math inline">V=IR</span> for a resistor</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">Kirchhoff’s laws</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">currents into a junction sum to zero; voltages around a loop sum to zero</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">power</td>
+<td style="text-align: center;"><span class="math inline">P</span></td>
+<td style="text-align: left;">rate of energy use, <span class="math inline">P=VI</span>, in watts (W)</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">energy</td>
+<td style="text-align: center;"><span class="math inline">E</span></td>
+<td style="text-align: left;"><span class="math inline">E=Pt</span>, in joules (J) or watt-hours (Wh)</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">voltage divider</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">two resistors in series that output a fraction of the input</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">loading</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a connected load changes the output of a divider</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">pull-up / pull-down resistor</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">resistor that sets a pin’s default level when nothing drives it</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">floating input</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a pin connected to nothing, so it reads random values</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">logic level</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the voltage ranges that count as 0 and 1 (here 0 V and 3.3 V)</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">LED forward voltage</td>
+<td style="text-align: center;"><span class="math inline">V_f</span></td>
+<td style="text-align: left;">the nearly constant voltage across a conducting LED</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">load line</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the straight line of possible operating points set by the supply and resistor</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">E12 series</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the 12 standard resistor values per decade (10, 12, 15, … 82)</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">capacitor</td>
+<td style="text-align: center;"><span class="math inline">C</span></td>
+<td style="text-align: left;">stores charge; in farads (F); voltage across it cannot jump</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">RC time constant</td>
+<td style="text-align: center;"><span class="math inline">\tau=RC</span></td>
+<td style="text-align: left;">time for an RC circuit to cover 63% of the way to its target</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">low-pass filter</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">passes slow changes and blocks fast ones</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">PWM</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">switching an output on and off quickly; the duty cycle sets the average</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">RMS value</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the “effective” value that gives the same heating as a steady voltage</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">MOSFET switch</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a transistor used as an electronic on/off switch controlled by a voltage</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">flyback diode</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a diode that gives a motor or relay coil’s current a path when switched off</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">back-EMF</td>
+<td style="text-align: center;"><span class="math inline">k\omega</span></td>
+<td style="text-align: left;">the voltage a spinning motor generates against its supply</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">stall current</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">current when the shaft is held still: <span class="math inline">V/R</span></td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">H-bridge</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">four switches that let a motor run both ways and be speed-controlled by PWM</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">battery capacity</td>
+<td style="text-align: center;"><span class="math inline">C</span></td>
+<td style="text-align: left;">charge a battery stores, in mAh; energy is <span class="math inline">C</span> times its voltage</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">ADC, resolution, LSB</td>
+<td style="text-align: center;"><span class="math inline">n</span>, <span class="math inline">q</span></td>
+<td style="text-align: left;">converts a voltage to an integer code; <span class="math inline">n</span> bits give <span class="math inline">2^n</span> codes; LSB is one step</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">quantisation error</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the difference between the true voltage and the code’s voltage</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">DAC</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">converts an integer code to a voltage (the reverse of an ADC)</td>
+<td style="text-align: center;">6</td>
+<td style="text-align: center;">new</td>
+</tr>
+</tbody>
+</table>
+<p>Terms <em>used but not taught here</em>: Nyquist and aliasing (Unit 3), microcontroller pins and interrupts (Unit 4), Wi-Fi (Unit 5), PID (Unit 9).</p>
+<h2 id="remember">2. Remember</h2>
+<div class="definition" title="The three basic quantities">
+<p><strong>Voltage</strong> <span class="math inline">V</span> (volts, V) is the electrical pressure that pushes charge; <strong>current</strong> <span class="math inline">I</span> (amperes, A) is the flow of charge; <strong>resistance</strong> <span class="math inline">R</span> (ohms, <span class="math inline">\Omega</span>) is how much a part resists the flow. For an ideal resistor they are tied by <strong>Ohm’s law</strong> <span class="math display"> V=IR. \tag{1}</span> Powers of ten: 1 mA <span class="math inline">=10^{-3}</span> A, 1 <span class="math inline">\mu</span>A <span class="math inline">=10^{-6}</span> A, 1 k<span class="math inline">\Omega=10^3\,\Omega</span>, 1 M<span class="math inline">\Omega=10^6\,\Omega</span>.</p>
+</div>
+<div class="definition" title="Power and energy">
+<p><strong>Power</strong> is the rate of energy use: <span class="math inline">P=VI</span>. With Ohm’s law, <span class="math inline">P=I^2R=V^2/R</span>. <strong>Energy</strong> is power times time, <span class="math inline">E=Pt</span> (joules if <span class="math inline">t</span> is in seconds; watt-hours if in hours). A battery’s <strong>capacity</strong> is usually quoted as charge in mAh; its energy is that charge times its voltage: 2000 mAh at 3.7 V is <span class="math inline">2.0\ \text{Ah}\times3.7\ \text{V}=7.4</span> Wh.</p>
+</div>
+<div class="definition" title="The picture to keep: water in pipes">
+<p>Voltage is like water pressure, current like flow rate, resistance like a narrow pipe. A narrow pipe (large <span class="math inline">R</span>) gives a small flow for the same pressure. Two pipes in series are harder to push water through (resistances add); two side by side are easier (conductances add). The analogy fails for fast signals and for diodes, but it carries this whole Unit.</p>
+</div>
+<p><strong>Memory hooks.</strong></p>
+<ul>
+<li><em>V = I R, “Very Important Rule”.</em> Cover the one you want in the triangle V over I and R.</li>
+<li><em>Power turns into heat in a resistor,</em> so a 100 <span class="math inline">\Omega</span> resistor carrying 0.1 A dissipates 1 W and gets hot. Small resistors are rated 0.25 W.</li>
+<li><em>A divider is a ratio, not a voltage source.</em> It is only right if little current is taken from it.</li>
+<li><em>An ADC with <span class="math inline">n</span> bits slices the range into <span class="math inline">2^n</span> steps; each extra bit halves the step.</em></li>
+</ul>
+<p><strong>Before you read on: three predictions</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>Two 10 k<span class="math inline">\Omega</span> resistors divide 3.3 V in half (1.65 V). You connect another 10 k<span class="math inline">\Omega</span> across the bottom resistor. What is the output now: about 1.65 V, about 1.1 V, or about 0.8 V?</li>
+<li>A 10-bit ADC with a 3.3 V reference reads a voltage. About how large is one step: 3 V, 3 mV, or 3 <span class="math inline">\mu</span>V?</li>
+<li>The rover’s motors are rated 6 V and the battery pack is 7.4 V. The motor driver chip drops 2 V. Can the motors get their full rated 6 V?</li>
+</ol>
+<p><strong>Recall quiz</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>What current flows through a 330 <span class="math inline">\Omega</span> resistor with 3.3 V across it, and how much power does it dissipate?</li>
+<li>Why does an input pin connected to nothing read random values?</li>
+<li>What does the duty cycle of a PWM signal decide?</li>
+<li>Why is the quantisation error of an ADC never larger than half a step?</li>
+<li>Which battery-node state uses most of the charge: the long sleep or the short awake time?</li>
+</ol>
+<h2 id="understand-the-derivation">3. Understand: the derivation</h2>
+<h3 id="tier-1-easy-intuition-and-a-picture">3.1 Tier 1 (easy): intuition and a picture</h3>
+<p>A microcontroller (the small computer of Unit 4) can only do two electrical things well: read a voltage between 0 V and its supply (3.3 V here) and put out 0 V or 3.3 V. Everything else in this Unit is the art of fitting the real world to that. A soil sensor’s resistance changes with wetness, and the microcontroller reads voltages, not resistances. The standard trick is a <strong>voltage divider</strong>: put the sensor in series with a fixed resistor and read the voltage at the join. Figure 1 (left) shows the result for a 10 k<span class="math inline">\Omega</span> fixed resistor and a sensor of 1 to 200 k<span class="math inline">\Omega</span>: a smooth S-shaped curve from 0.30 V to 3.14 V, steepest where the two resistances are equal.</p>
+<figure>
+<img src="../assets/fig/u2/fig01_divider.png" style="width:95.0%" alt="Left: output of a divider (10 k\Omega on top, a resistive sensor Rs on the bottom, 3.3 V supply) against sensor resistance, with the matching 12-bit ADC code on the right axis. A 2 k\Omega sensor gives 0.55 V (code 682), 10 k\Omega gives 1.65 V (code 2048), 100 k\Omega gives 3.00 V (code 3723). Right: the error of a 10 k\Omega / 10 k\Omega divider when something draws current from its output: a load of 10 k\Omega makes it 33% low, 100 k\Omega 4.8% low, 1 M\Omega 0.5% low." />
+<figcaption aria-hidden="true">Left: output of a divider (10 k<span class="math inline">\Omega</span> on top, a resistive sensor Rs on the bottom, 3.3 V supply) against sensor resistance, with the matching 12-bit ADC code on the right axis. A 2 k<span class="math inline">\Omega</span> sensor gives 0.55 V (code 682), 10 k<span class="math inline">\Omega</span> gives 1.65 V (code 2048), 100 k<span class="math inline">\Omega</span> gives 3.00 V (code 3723). Right: the error of a 10 k<span class="math inline">\Omega</span> / 10 k<span class="math inline">\Omega</span> divider when something draws current from its output: a load of 10 k<span class="math inline">\Omega</span> makes it 33% low, 100 k<span class="math inline">\Omega</span> 4.8% low, 1 M<span class="math inline">\Omega</span> 0.5% low.</figcaption>
+</figure>
+<p>The right panel is the warning that comes with the trick: the divider’s output is only the nominal value if the next stage draws almost no current. We derive both curves in Section 3.2 and 3.3.</p>
+<h3 id="tier-2-medium-the-definitions-made-precise">3.2 Tier 2 (medium): the definitions made precise</h3>
+<h4 id="series-parallel-and-kirchhoffs-laws">3.2.1 Series, parallel and Kirchhoff’s laws</h4>
+<p>Two laws, both statements of conservation, explain every circuit in this course. <strong>Kirchhoff’s current law (KCL):</strong> the currents flowing into a junction sum to zero (charge does not pile up). <strong>Kirchhoff’s voltage law (KVL):</strong> the voltage rises and drops around any closed loop sum to zero (energy is conserved).</p>
+<p>For two resistors in <strong>series</strong> the same current <span class="math inline">I</span> flows through both (KCL), and the voltages add around the loop (KVL), so <span class="math inline">V=IR_1+IR_2=I(R_1+R_2)</span> and the combined resistance is <span class="math display"> R_{\text{series}}=R_1+R_2. \tag{2}</span> For two resistors in <strong>parallel</strong> the same voltage <span class="math inline">V</span> is across both (KVL) and the currents add (KCL): <span class="math inline">I=V/R_1+V/R_2=V(1/R_1+1/R_2)</span>, so <span class="math display"> R_{\parallel}=\frac{R_1R_2}{R_1+R_2}. \tag{3}</span> Two equal resistors in parallel give half: <span class="math inline">10\ \text{k}\Omega\parallel10\ \text{k}\Omega=5\ \text{k}\Omega</span>. The module’s <code>series</code> and <code>parallel</code> functions are these formulas.</p>
+<h4 id="the-voltage-divider">3.2.2 The voltage divider</h4>
+<p>Put <span class="math inline">R_1</span> (top) and <span class="math inline">R_2</span> (bottom) in series across <span class="math inline">V_{\text{in}}</span>; the output is taken across <span class="math inline">R_2</span>. By (2) the current is <span class="math inline">I=V_{\text{in}}/(R_1+R_2)</span>, and by Ohm’s law the voltage across <span class="math inline">R_2</span> is <span class="math display"> \begin{aligned}
+V_{\text{out}}&amp;=I\,R_2 &amp;&amp;\text{(Ohm&#39;s law on }R_2)\\
+&amp;=\frac{V_{\text{in}}}{R_1+R_2}\,R_2 &amp;&amp;\text{(insert the series current)}\\
+&amp;=V_{\text{in}}\,\frac{R_2}{R_1+R_2}. &amp;&amp;\text{(rearrange)}
+\end{aligned} \tag{4}</span> It is a <strong>ratio</strong>: the output is the fraction <span class="math inline">R_2/(R_1+R_2)</span> of the input. For <span class="math inline">R_1=R_2=10\ \text{k}\Omega</span> and 3.3 V, the output is 1.65 V. For the soil sensor as <span class="math inline">R_2</span>: 2 k<span class="math inline">\Omega</span> gives <span class="math inline">3.3\times2/12=0.55</span> V, and 100 k<span class="math inline">\Omega</span> gives <span class="math inline">3.3\times100/110=3.00</span> V, as in Figure 1. The steepest point is where <span class="math inline">R_s=R_1</span>: there <span class="math inline">\mathrm{d}V_{\text{out}}/\mathrm{d}R_s=V_{\text{in}}R_1/(R_1+R_s)^2=3.3/(4\times10\,\text{k}\Omega)=82.5</span> mV per k<span class="math inline">\Omega</span>, which a 12-bit ADC sees as about 102 codes per k<span class="math inline">\Omega</span>. So choose <span class="math inline">R_1</span> near the middle of the sensor’s range: the sensitivity is best there.</p>
+<h4 id="real-resistors-come-in-standard-values">3.2.3 Real resistors come in standard values</h4>
+<p>You cannot buy every value. The <strong>E12 series</strong> has 12 values per decade: 1.0, 1.2, 1.5, 1.8, 2.2, 2.7, 3.3, 3.9, 4.7, 5.6, 6.8, 8.2, times a power of ten (tolerance about 10%). The module’s <code>nearest_e12(r, "up"|"down"|"nearest")</code> rounds a computed value to one of them. A design is therefore finished only after rounding and re-checking: a calculated 130 <span class="math inline">\Omega</span> becomes 120 or 150 <span class="math inline">\Omega</span> (Section 3.3.2).</p>
+<h3 id="tier-3-medium-hard-the-main-derivations">3.3 Tier 3 (medium-hard): the main derivations</h3>
+<h4 id="loading-the-divider-with-something-attached">3.3.1 Loading: the divider with something attached</h4>
+<p>If the next stage (an ADC input, an op-amp, a wire to another board) has resistance <span class="math inline">R_L</span> to ground, it sits <strong>in parallel</strong> with <span class="math inline">R_2</span>. Replace <span class="math inline">R_2</span> by <span class="math inline">R_2\parallel R_L</span> in (4): <span class="math display"> V_{\text{out}}=V_{\text{in}}\frac{R_2\parallel R_L}{R_1+R_2\parallel R_L}. \tag{5}</span> For <span class="math inline">R_L=R_2=10\ \text{k}\Omega</span>, <span class="math inline">R_2\parallel R_L=5\ \text{k}\Omega</span>, so <span class="math inline">V_{\text{out}}=3.3\times5/15=1.10</span> V instead of 1.65 V, an error of <span class="math inline">-33.3\%</span>. That answers prediction 1 of Section 2. For a load ten times larger, <span class="math inline">R_L=100\ \text{k}\Omega</span>: <span class="math inline">R_2\parallel R_L=9.09\ \text{k}\Omega</span> and the output is 1.571 V, <span class="math inline">-4.8\%</span>; a hundred times larger, <span class="math inline">-0.5\%</span> (Figure 1, right; the numbers are printed by <code>fig01_divider.py</code>). <strong>Rule of thumb: the load should be at least 10 times the divider’s own resistance, or 100 times for 0.5% accuracy.</strong> (The divider’s own “source resistance” seen from the output is <span class="math inline">R_1\parallel R_2=5\ \text{k}\Omega</span>, which is the quantity that matters when comparing with <span class="math inline">R_L</span>.)</p>
+<p><em>A level shifter is a divider.</em> A 5 V sensor output must not go straight into a pin that tolerates at most 3.3 V (about 3.6 V is the usual absolute limit; check the datasheet). Choose <span class="math inline">R_1</span> and <span class="math inline">R_2</span> so that <span class="math inline">5\,R_2/(R_1+R_2)\le3.3</span> V. The ratio needed is <span class="math inline">R_2/R_1\le1.94</span>. The pair 10 k<span class="math inline">\Omega</span> and 20 k<span class="math inline">\Omega</span> gives 3.33 V (slightly over 3.3 V but within the usual 3.6 V limit), 10 k<span class="math inline">\Omega</span> and 22 k<span class="math inline">\Omega</span> gives 3.44 V, and the standard-value pair 1.8 k<span class="math inline">\Omega</span> and 3.3 k<span class="math inline">\Omega</span> gives 3.235 V, safely under 3.3 V (found by searching all E12 pairs between 1 k<span class="math inline">\Omega</span> and 100 k<span class="math inline">\Omega</span>; script <code>analysis_numbers.py</code>). The same divider is only suitable when the signal is slow, because the pin’s input capacitance and the divider’s resistance form a filter (next subsections).</p>
+<h4 id="pull-ups-floating-inputs-and-logic-levels">3.3.2 Pull-ups, floating inputs and logic levels</h4>
+<p>A <strong>logic level</strong> is the voltage range that counts as 0 or 1: here about 0 V is “0” and about 3.3 V is “1”. An input pin that is connected to nothing is a <strong>floating input</strong>: it has almost infinite resistance to everything, so stray charge and nearby signals set its voltage, and it reads random values. A button that connects a pin to ground when pressed leaves the pin floating when released. The fix is a <strong>pull-up resistor</strong> to 3.3 V: released, the pin is pulled to 3.3 V through the resistor (no current flows into the pin, so there is almost no voltage drop and the pin reads 1); pressed, the pin is shorted to 0 V (reads 0), and a current <span class="math inline">3.3\ \text{V}/10\ \text{k}\Omega=0.33</span> mA flows through the resistor for as long as the button is held. A larger resistor (100 k<span class="math inline">\Omega</span>: 0.033 mA) wastes less; it also charges the pin’s capacitance more slowly: with an assumed 10 pF of pin capacitance, <span class="math inline">\tau=RC</span> is 0.1 <span class="math inline">\mu</span>s for 10 k<span class="math inline">\Omega</span> and 1 <span class="math inline">\mu</span>s for 100 k<span class="math inline">\Omega</span>, both far faster than a human button press. A <strong>pull-down</strong> is the mirror image (resistor to 0 V, button to 3.3 V). Most microcontrollers have built-in pull-ups that can be switched on in software (Unit 4).</p>
+<h4 id="the-led-and-its-load-line">3.3.3 The LED and its load line</h4>
+<p>A resistor obeys Ohm’s law: current is proportional to voltage. An LED does not: it passes almost nothing below its <strong>forward voltage</strong> <span class="math inline">V_f</span> (about 2 V for a red LED, an assumed value here) and then current rises extremely fast. A standard model is the diode equation <span class="math inline">I=I_s\big(e^{V/(nV_T)}-1\big)</span> with thermal voltage <span class="math inline">V_T=0.02585</span> V; we assume <span class="math inline">n=2</span> and choose <span class="math inline">I_s</span> so that the LED drops 2.0 V at 10 mA (the function <code>led_is_for</code>). An LED has to be limited by a series resistor, because a voltage source across it would drive an unlimited current. With supply <span class="math inline">V_s</span> and resistor <span class="math inline">R</span>, KVL gives the <strong>load line</strong> <span class="math display"> V_s=IR+V_{\text{LED}}(I)\quad\Longleftrightarrow\quad I=\frac{V_s-V_{\text{LED}}}{R}, \tag{6}</span> a straight line in the <span class="math inline">I</span>-<span class="math inline">V</span> plane. The circuit operates where the load line crosses the LED’s curve: the only point satisfying both. Because the LED curve is nearly vertical at <span class="math inline">V_f</span>, the voltage across it is about <span class="math inline">V_f</span> whatever the current, and the design formula follows: the resistor must drop the rest, <span class="math display"> R=\frac{V_s-V_f}{I_{\text{LED}}}=\frac{3.3-2.0}{0.010}=130\ \Omega. \tag{7}</span> No E12 value is 130 <span class="math inline">\Omega</span>: the neighbours are 120 and 150 <span class="math inline">\Omega</span>. Solving (6) numerically (the function <code>led_current</code>) gives the true current: 150 <span class="math inline">\Omega</span> gives 8.71 mA (about 13% under 10 mA, slightly dimmer), 100 <span class="math inline">\Omega</span> gives 12.87 mA, 330 <span class="math inline">\Omega</span> gives 4.08 mA. The resistor dissipates <span class="math inline">I^2R=13</span> mW at the design point, far below its 250 mW rating.</p>
+<figure>
+<img src="../assets/fig/u2/fig02_led.png" style="width:95.0%" alt="Left: the assumed LED curve (black) and the load lines of four series resistors from a 3.3 V supply; dots are the operating points: 100 \Omega gives 12.87 mA, 130 \Omega gives 10.00 mA, 150 \Omega gives 8.71 mA, 330 \Omega gives 4.08 mA. The LED voltage barely moves (1.95 to 2.01 V). Right: the LED current against supply voltage for 150 \Omega and 330 \Omega: with 150 \Omega a battery drooping from 4.2 V to 3.0 V changes the current from 14.5 mA to 6.8 mA, more than a factor of two." />
+<figcaption aria-hidden="true">Left: the assumed LED curve (black) and the load lines of four series resistors from a 3.3 V supply; dots are the operating points: 100 <span class="math inline">\Omega</span> gives 12.87 mA, 130 <span class="math inline">\Omega</span> gives 10.00 mA, 150 <span class="math inline">\Omega</span> gives 8.71 mA, 330 <span class="math inline">\Omega</span> gives 4.08 mA. The LED voltage barely moves (1.95 to 2.01 V). Right: the LED current against supply voltage for 150 <span class="math inline">\Omega</span> and 330 <span class="math inline">\Omega</span>: with 150 <span class="math inline">\Omega</span> a battery drooping from 4.2 V to 3.0 V changes the current from 14.5 mA to 6.8 mA, more than a factor of two.</figcaption>
+</figure>
+<p>Note the limitation the right panel exposes: a resistor-limited LED is a poor constant-current source. A supply that moves by 1.2 V (a Li-ion cell from full to flat) moves the brightness by more than a factor of two. The remedy, a constant-current driver, is outside the scope of this course.</p>
+<h4 id="pwm-average-and-rms">3.3.4 PWM: average and RMS</h4>
+<p><strong>Pulse-width modulation (PWM)</strong> switches an output between 0 and <span class="math inline">V_H</span> at a fixed frequency; the fraction of each period <span class="math inline">T</span> spent high is the <strong>duty cycle</strong> <span class="math inline">D</span> (Unit 1). Its average over one period is <span class="math display"> \bar v=\frac1T\int_0^T v\,\mathrm{d}t=\frac1T\,(V_H\cdot DT+0\cdot(1-D)T)=D\,V_H. \tag{8}</span> Its <strong>RMS value</strong> (root mean square: the steady voltage that would heat a resistor equally) follows from the mean of <span class="math inline">v^2</span>, which is <span class="math inline">V_H^2D</span> because <span class="math inline">v^2</span> is <span class="math inline">V_H^2</span> for a fraction <span class="math inline">D</span> of the time and 0 otherwise: <span class="math display"> v_{\text{rms}}=\sqrt{\frac1T\int_0^T v^2\,\mathrm{d}t}=V_H\sqrt{D}. \tag{9}</span> At <span class="math inline">D=0.25</span> and 3.3 V the mean is 0.825 V but the RMS value is <span class="math inline">3.3\times0.5=1.65</span> V, twice as large: <strong>a PWM signal heats a resistor like its RMS value, but a slow motor or an RC filter responds to its mean.</strong> The module’s <code>pwm_stats</code> returns both.</p>
+<h4 id="the-rc-filter-and-ripple">3.3.5 The RC filter and ripple</h4>
+<p>A <strong>capacitor</strong> <span class="math inline">C</span> (farads) stores charge <span class="math inline">Q=CV</span>, so the current into it is <span class="math inline">I=C\,\mathrm{d}V/\mathrm{d}t</span> and <strong>its voltage cannot jump</strong>. Put a resistor <span class="math inline">R</span> between a source <span class="math inline">V_{\text{in}}</span> and a capacitor and read the capacitor voltage <span class="math inline">v</span>: the resistor current is <span class="math inline">(V_{\text{in}}-v)/R</span>, which must equal the capacitor current, so <span class="math display"> RC\,\frac{\mathrm{d}v}{\mathrm{d}t}=V_{\text{in}}-v\quad\Longleftrightarrow\quad\frac{\mathrm{d}v}{\mathrm{d}t}=-\frac{v-V_{\text{in}}}{\tau},\qquad\tau=RC. \tag{10}</span> This is <strong>exactly the first-order equation of Unit 1</strong> (Section 3.3.1 there) with target <span class="math inline">V_{\text{in}}</span> and time constant <span class="math inline">\tau=RC</span>, so its solution for a constant input is <span class="math inline">v(t)=V_{\text{in}}+(v(0)-V_{\text{in}})e^{-t/\tau}</span>: 63% of the way after one <span class="math inline">\tau</span>. It is a <strong>low-pass filter</strong>: it follows slow changes and averages away fast ones. Driven by PWM with <span class="math inline">\tau\gg T</span>, the output settles near the mean <span class="math inline">DV_H</span> with a small sawtooth <strong>ripple</strong>. To find its size: during the on-time <span class="math inline">DT</span> the output rises by about <span class="math inline">(V_H-\bar v)\,DT/\tau</span> (rate of rise at the mean value, times duration), and <span class="math inline">V_H-\bar v=V_H(1-D)</span>, so <span class="math display"> \Delta v_{pp}\approx V_H\,D(1-D)\,\frac{T}{\tau}. \tag{11}</span> The ripple is largest at <span class="math inline">D=0.5</span> and falls in proportion to <span class="math inline">T/\tau</span>. Figure 3 simulates the circuit exactly and compares: for <span class="math inline">D=0.5</span> and <span class="math inline">\tau/T=10</span>, the measured ripple is 0.0825 V against the formula 0.0825 V; for <span class="math inline">\tau/T</span> from 3 to 200 the measured and predicted values agree to better than 0.5% (for example 0.0165 V against 0.0165 V at 50, and 0.0041 V against 0.0041 V at 200; for <span class="math inline">D=0.25</span> at <span class="math inline">\tau/T=10</span>, 0.0619 V against 0.0619 V). PWM through an RC filter is thus a cheap <strong>DAC</strong> (digital-to-analog converter, a part that turns a number into a voltage): the duty cycle is the number and the filter’s output is the voltage. The price is the trade of Section 3.5: more smoothing means a slower response (settling takes about <span class="math inline">3\tau</span> to 95%).</p>
+<figure>
+<img src="../assets/fig/u2/fig03_pwm.png" style="width:95.0%" alt="Left: a 3.3 V, 50% PWM signal (grey) smoothed by an RC filter with \tau=10 ms and period T=1 ms (blue): the output rises toward the mean of 1.65 V (dotted) in a few time constants with a small ripple. Right: measured peak-to-peak ripple (markers) against \tau/T for two duty cycles, with the formula (lines): they agree to within 0.5% for \tau/T\ge5." />
+<figcaption aria-hidden="true">Left: a 3.3 V, 50% PWM signal (grey) smoothed by an RC filter with <span class="math inline">\tau=10</span> ms and period <span class="math inline">T=1</span> ms (blue): the output rises toward the mean of 1.65 V (dotted) in a few time constants with a small ripple. Right: measured peak-to-peak ripple (markers) against <span class="math inline">\tau/T</span> for two duty cycles, with the formula (lines): they agree to within 0.5% for <span class="math inline">\tau/T\ge5</span>.</figcaption>
+</figure>
+<p><em>An honest note.</em> The first version of the simulator compared floating-point times to decide whether a PWM step was high, and a rounding error made a few periods one step too long; the measured ripple was then up to 17% above the formula at large <span class="math inline">\tau/T</span> (0.0096 V against 0.0082 V at 100). The formula was right and the test rig was wrong. The module now counts integer steps. A figure that disagrees with a derivation is a reason to look at both.</p>
+<h4 id="the-adc-and-its-quantisation-error">3.3.6 The ADC and its quantisation error</h4>
+<p>An <strong>ADC</strong> (analog-to-digital converter) turns a voltage between 0 and its reference voltage <span class="math inline">V_{\text{ref}}</span> into an integer code from 0 to <span class="math inline">2^n-1</span>, where <span class="math inline">n</span> is the <strong>resolution</strong> in bits. One code step, the <strong>LSB</strong> (least significant bit), is <span class="math display"> q=\frac{V_{\text{ref}}}{2^n}. \tag{12}</span> For <span class="math inline">n=10</span> and <span class="math inline">V_{\text{ref}}=3.3</span> V, <span class="math inline">q=3.22</span> mV: prediction 2 of Section 2 is answered (a few millivolts). For <span class="math inline">n=12</span>, <span class="math inline">q=0.806</span> mV. The converter reports which bin the input fell in; taking the bin’s middle as the reading, the <strong>quantisation error</strong> is between <span class="math inline">-q/2</span> and <span class="math inline">+q/2</span> (Figure 4, left, with a deliberately coarse 3-bit ADC: step 0.41 V, maximum error 0.206 V = <span class="math inline">q/2</span>). If the input is busy, the error is uniformly distributed over that interval with density <span class="math inline">1/q</span>, so its variance is <span class="math display"> \sigma_q^2=\int_{-q/2}^{q/2}x^2\,\frac1q\,\mathrm{d}x=\frac1q\cdot\frac{2}{3}\left(\frac q2\right)^3=\frac{q^2}{12},\qquad\sigma_q=\frac{q}{\sqrt{12}}. \tag{13}</span> Each extra bit halves <span class="math inline">q</span> and so halves the RMS error. We checked this with 200,000 random inputs: at 8 bits the simulated RMS error is 3.729 mV against <span class="math inline">q/\sqrt{12}=3.721</span> mV; at 10 bits, 0.931 mV against 0.930 mV; at 12 bits, 0.2326 mV against 0.2326 mV (Figure 4, right). For a full-scale sine wave the ratio of signal power to quantisation-noise power, in decibels, is about <span class="math inline">6.02\,n+1.76</span> dB; our simulation gave 49.85 dB (formula 49.92) at 8 bits, 62.11 dB (61.96) at 10 bits and 74.03 dB (74.00) at 12 bits.</p>
+<figure>
+<img src="../assets/fig/u2/fig04_adc.png" style="width:95.0%" alt="Left: a 3-bit ADC (8 levels, step 0.41 V) reading a ramp from 0 to 3.3 V (blue staircase), with its error as a red sawtooth that never leaves \pm0.206 V (half a step). Right: simulated RMS quantisation error (dots) against ADC bits, with the formula q/\sqrt{12} (line): each added bit halves the error, from 59.5 mV at 4 bits to 0.233 mV at 12 bits." />
+<figcaption aria-hidden="true">Left: a 3-bit ADC (8 levels, step 0.41 V) reading a ramp from 0 to 3.3 V (blue staircase), with its error as a red sawtooth that never leaves <span class="math inline">\pm0.206</span> V (half a step). Right: simulated RMS quantisation error (dots) against ADC bits, with the formula <span class="math inline">q/\sqrt{12}</span> (line): each added bit halves the error, from 59.5 mV at 4 bits to 0.233 mV at 12 bits.</figcaption>
+</figure>
+<p>This is the <em>ideal</em> converter. A real one adds its own noise, gain and offset errors, and a reference voltage that is only as good as the supply, so <strong>a 12-bit ADC is not a 12-bit measurement</strong> (Section 3.5).</p>
+<h3 id="tier-4-hard-generalisation-edge-cases-what-the-textbooks-gloss-over">3.4 Tier 4 (hard): generalisation, edge cases, what the textbooks gloss over</h3>
+<h4 id="the-battery-nodes-power-budget-and-the-r4-requirement">3.4.1 The battery node’s power budget, and the R4 requirement</h4>
+<p>Unit 1 assumed 120 mA for 2 s. A budget should list <strong>states</strong>: for each state its current and the time spent in it per cycle. Our assumed table for a Wi-Fi sensor node reporting every 60 s: wake and read the sensor (50 mA, 0.2 s), Wi-Fi connect (100 mA, 1.3 s), MQTT publish (140 mA, 0.3 s), shutdown (50 mA, 0.2 s), deep sleep (0.01 mA, the other 58 s). The charge per cycle is the sum of current times time over the states, <span class="math inline">10+130+42+10+0.58=192.6</span> mA s, so the average current is <span class="math inline">192.58/60=3.210</span> mA and the life of the 2000 mAh battery (80% usable) is <span class="math display"> \text{life}=\frac{C\,\eta}{24\,\bar I}=\frac{2000\times0.8}{24\times3.210}=20.8\ \text{days}. \tag{14}</span> Requirement R4 of Unit 1 asks for at least 30 days. <strong>The design fails the requirement.</strong> Where does the charge go? Wi-Fi connect uses 67.5% of it, publish 21.8%, the two 0.2 s states 5.2% each, and the 58 seconds of deep sleep only <strong>0.3%</strong> (Figure 5, left). The long sleep is not the problem; the 2 seconds awake are. A battery budget is a budget of <em>awake charge</em>.</p>
+<p>How much awake time can we afford? For 30 days the average current must be at most <span class="math inline">2000\times0.8/(24\times30)=2.222</span> mA. Writing the average as awake fraction times the mean awake current plus the rest asleep and solving for the awake time <span class="math inline">t</span> at period <span class="math inline">P=60</span> s: <span class="math display"> \begin{aligned}
+\bar I&amp;=\frac{I_{\text{act}}\,t+I_{\text{slp}}\,(P-t)}{P}\le I_{\max} &amp;&amp;\text{(average current, Unit 1)}\\
+t&amp;\le P\,\frac{I_{\max}-I_{\text{slp}}}{I_{\text{act}}-I_{\text{slp}}} &amp;&amp;\text{(solve for }t)
+\end{aligned} \tag{15}</span> With the mean awake current <span class="math inline">192/2.0=96</span> mA this gives <span class="math inline">t\le1.383</span> s: the current design (2.0 s awake) is too long by 0.6 s. The right panel of Figure 5 plots this limit against the reporting period: at 60 s it is 1.38 s; at 5 minutes, 6.9 s; at 15 minutes, 20.7 s. <strong>Design change:</strong> keep the radio’s channel and address in memory so that the connection step takes 0.5 s instead of 1.3 s (an assumed saving; the technique is Unit 4’s deep-sleep topic). The cycle becomes 0.2, 0.5, 0.3, 0.2 s awake = 1.2 s, charge per cycle 112.6 mA s, average current 1.877 mA, life <strong>35.5 days</strong>: R4 is met with a margin of 18%.</p>
+<figure>
+<img src="../assets/fig/u2/fig05_budget.png" style="width:95.0%" alt="Left: charge per 60 s cycle by state, before (Wi-Fi connect 1.3 s) and after (0.5 s). Average current falls from 3.210 mA to 1.876 mA and life rises from 20.8 to 35.5 days. Right: the longest awake time per report that still meets 30 days, against the reporting period, for the two mean awake currents. The cross (2.0 s awake, fails) lies above the curve at 60 s; the dot (1.2 s, passes) lies below it. All currents and times are assumed." />
+<figcaption aria-hidden="true">Left: charge per 60 s cycle by state, before (Wi-Fi connect 1.3 s) and after (0.5 s). Average current falls from 3.210 mA to 1.876 mA and life rises from 20.8 to 35.5 days. Right: the longest awake time per report that still meets 30 days, against the reporting period, for the two mean awake currents. The cross (2.0 s awake, fails) lies above the curve at 60 s; the dot (1.2 s, passes) lies below it. All currents and times are assumed.</figcaption>
+</figure>
+<h4 id="switching-a-load-the-mosfet-the-flyback-diode-the-h-bridge">3.4.2 Switching a load: the MOSFET, the flyback diode, the H-bridge</h4>
+<p>A microcontroller pin can supply only a few to some tens of mA, so a motor, a valve or a relay needs a <strong>transistor switch</strong>. A <strong>MOSFET</strong> is controlled by the <em>voltage</em> on its gate and draws no steady gate current; a logic-level type turns fully on with 3.3 V and then looks like a small resistor <span class="math inline">R_{DS(on)}</span>. If it is 0.1 <span class="math inline">\Omega</span> (an assumed value), carrying 0.5 A it dissipates <span class="math inline">I^2R=25</span> mW and stays cool. The older bipolar transistor is controlled by <em>current</em>: to saturate a 0.2 A load with a rule-of-thumb “forced gain” of 10 you must feed 20 mA into its base, more than most pins can give.</p>
+<p>A motor or a relay coil is an <strong>inductor</strong>: its current cannot change instantly, because the voltage across it is <span class="math inline">L\,\mathrm{d}i/\mathrm{d}t</span>. If a transistor interrupts a 0.5 A current in a 2 mH coil within 1 <span class="math inline">\mu</span>s, the voltage spike is <span class="math inline">L\,\Delta i/\Delta t=2\times10^{-3}\times0.5/10^{-6}=1000</span> V (an order of magnitude; real spikes are limited by stray capacitance), enough to destroy the transistor. A <strong>flyback diode</strong> across the coil gives the current a path to circulate and die away. <em>Always put one across an inductive load switched by a transistor.</em></p>
+<p>To make a motor turn both ways, an <strong>H-bridge</strong> uses four switches arranged as an H with the motor as the crossbar: closing the top-left and bottom-right pair drives current one way, the other pair drives it the other way, and PWM on the switches sets the average voltage (Section 3.3.4). Each current path goes through two conducting switches in series, so a bridge has a total <strong>voltage drop</strong> (about 0.4 V for a MOSFET bridge, about 2 V for an older bipolar one: assumed typical orders of magnitude). The motor sees at most <span class="math inline">V_{\text{supply}}-V_{\text{drop}}</span> at full duty. That is the answer to prediction 3: on a 7.4 V pack with a 2 V bridge, the motors get at most 5.4 V, <strong>not</strong> their rated 6 V.</p>
+<h4 id="the-dc-motor-model-and-sizing-the-rovers-drive">3.4.3 The DC motor model and sizing the rover’s drive</h4>
+<p>A permanent-magnet DC motor has a winding of resistance <span class="math inline">R</span>. A spinning motor also acts as a generator: it produces a <strong>back-EMF</strong> proportional to speed, <span class="math inline">k_e\omega</span>, opposing the supply. KVL around the electrical loop gives <span class="math display"> V=iR+k_e\,\omega. \tag{16}</span> The torque on the shaft is proportional to current, <span class="math inline">\tau=k_t\,i</span>. Energy conservation fixes <span class="math inline">k_t=k_e=k</span> in SI units: the electrical power turned into mechanical power is <span class="math inline">(k_e\omega)\,i</span> and the mechanical power is <span class="math inline">\tau\omega=k_t i\,\omega</span>; equating them gives <span class="math inline">k_e=k_t</span>. Eliminating <span class="math inline">i=\tau/k</span> gives the speed-torque line <span class="math display"> \omega=\frac{V-(\tau/k)\,R}{k}. \tag{17}</span> It is a straight line: highest speed at zero torque (<span class="math inline">\omega_0</span>, the no-load speed), falling to zero at the stall torque, where <span class="math inline">i=V/R</span> is the <strong>stall current</strong>. We build the model from catalogue-style numbers (assumed): rated 6 V, stall current 0.8 A, no-load current 0.15 A (paying for internal friction), no-load speed 200 rpm. Then <span class="math inline">R=6/0.8=7.5\ \Omega</span> and, from <span class="math inline">V-i_0R=k\omega_0</span> at no load, <span class="math inline">k=(6-0.15\times7.5)/20.94=0.2328</span> V s/rad. Taking the friction current into account, the shaft torque is <span class="math inline">k(i-i_0)</span>.</p>
+<p><em>The rover’s demand</em> (assumed): mass 1.5 kg, wheel radius 33 mm, rolling resistance coefficient 0.05, two driven wheels. At constant speed the rolling force is <span class="math inline">0.05\times1.5\times9.81=0.736</span> N, shared by two wheels: each motor delivers <span class="math inline">\tau_c=0.736\times0.033/2=12.1</span> mN m. To accelerate at 0.5 m/s<span class="math inline">^2</span> it also needs <span class="math inline">ma=0.75</span> N: each motor adds <span class="math inline">0.75\times0.033/2=12.4</span> mN m, so <span class="math inline">\tau_a=24.5</span> mN m. A speed of 0.5 m/s needs a wheel speed of <span class="math inline">0.5/0.033=15.15</span> rad/s = 144.7 rpm. Rearranging (17) with friction (the module’s <code>volts_needed</code>) gives the motor voltage required: <span class="math display"> V_{\text{needed}}=k\omega+\Big(\frac{\tau}{k}+i_0\Big)R. \tag{18}</span> For cruising: <span class="math inline">0.2328\times15.15+(0.01214/0.2328+0.15)\times7.5=3.53+1.51=5.04</span> V (motor current 0.202 A). While accelerating: 5.44 V (0.255 A). Both are below the rated 6 V, so the <em>motor</em> is big enough (Figure 6, left: the cruise and accelerating points lie on the 6 V line well above the 144 rpm needed). The decision is made by the <em>driver</em>:</p>
+<table>
+<caption>the rover at 0.5 m/s, with a duty above 1 meaning the motor cannot get the voltage it needs. With the assumed numbers, a 2 V-drop bridge fails on a nearly flat pack (6.8 V) even at cruise, and a 0.4 V-drop bridge works on both. The motors are the same; the bridge decides.</caption>
+<colgroup>
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 19%" />
+<col style="width: 19%" />
+<col style="width: 19%" />
+<col style="width: 14%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">bridge</th>
+<th style="text-align: left;">pack</th>
+<th style="text-align: right;">max motor voltage</th>
+<th style="text-align: right;">duty needed, cruise</th>
+<th style="text-align: right;">duty needed, accelerating</th>
+<th style="text-align: left;">verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">bipolar (drop 2.0 V)</td>
+<td style="text-align: left;">7.4 V</td>
+<td style="text-align: right;">5.40 V</td>
+<td style="text-align: right;">0.934</td>
+<td style="text-align: right;">1.008</td>
+<td style="text-align: left;">cannot accelerate</td>
+</tr>
+<tr>
+<td style="text-align: left;">bipolar (drop 2.0 V)</td>
+<td style="text-align: left;">6.8 V</td>
+<td style="text-align: right;">4.80 V</td>
+<td style="text-align: right;">1.051</td>
+<td style="text-align: right;">1.134</td>
+<td style="text-align: left;">cannot even cruise</td>
+</tr>
+<tr>
+<td style="text-align: left;">MOSFET (drop 0.4 V)</td>
+<td style="text-align: left;">7.4 V</td>
+<td style="text-align: right;">7.00 V</td>
+<td style="text-align: right;">0.720</td>
+<td style="text-align: right;">0.777</td>
+<td style="text-align: left;">works, headroom</td>
+</tr>
+<tr>
+<td style="text-align: left;">MOSFET (drop 0.4 V)</td>
+<td style="text-align: left;">6.8 V</td>
+<td style="text-align: right;">6.40 V</td>
+<td style="text-align: right;">0.788</td>
+<td style="text-align: right;">0.850</td>
+<td style="text-align: left;">works, headroom</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="../assets/fig/u2/fig06_motor.png" style="width:95.0%" alt="Left: speed-torque lines of one motor at 6 V (blue) and 4 V (orange, ending at its lower stall torque) with the rover’s cruise (green dot, 12.1 mN m) and accelerating (red square, 24.5 mN m) operating points; the dotted line is the 144.7 rpm needed for 0.5 m/s. Right: the largest motor voltage at full duty against pack voltage for a 2.0 V and a 0.4 V bridge drop, with the 5.04 V (cruise) and 5.44 V (accelerating) requirements. At 7.4 V the bipolar bridge delivers 5.40 V, just short of the accelerating requirement." />
+<figcaption aria-hidden="true">Left: speed-torque lines of one motor at 6 V (blue) and 4 V (orange, ending at its lower stall torque) with the rover’s cruise (green dot, 12.1 mN m) and accelerating (red square, 24.5 mN m) operating points; the dotted line is the 144.7 rpm needed for 0.5 m/s. Right: the largest motor voltage at full duty against pack voltage for a 2.0 V and a 0.4 V bridge drop, with the 5.04 V (cruise) and 5.44 V (accelerating) requirements. At 7.4 V the bipolar bridge delivers 5.40 V, just short of the accelerating requirement.</figcaption>
+</figure>
+<p><em>Stall.</em> A jammed motor draws <span class="math inline">V/R=0.8</span> A and dissipates <span class="math inline">I^2R=4.8</span> W in a winding meant for a fraction of that. The driver should be rated for the stall current of both motors (1.6 A) or limit current, and the software must detect a stall (Unit 9). <em>Endurance.</em> With the 0.72 duty of the MOSFET design, the battery supplies <span class="math inline">0.72\times0.202=0.146</span> A per motor, 0.291 A for both. An edge computer drawing an assumed 0.5 A at 5 V through a 90% efficient regulator adds <span class="math inline">5\times0.5/7.4/0.9=0.375</span> A, in total 0.667 A. A 2600 mAh pack (80% usable, 19.2 Wh nominal, 15.4 Wh usable) lasts <span class="math inline">2600\times0.8/667=3.1</span> h; the motors alone would allow 7.1 h. <strong>The computer, not the wheels, is the larger load</strong>, which is typical for small robots.</p>
+<h3 id="tier-5-hardest-open-questions">3.5 Tier 5 (hardest): open questions</h3>
+<ol type="1">
+<li><strong>What is a bit worth?</strong> An <span class="math inline">n</span>-bit ADC resolves steps of <span class="math inline">q</span>, but its accuracy is limited by reference voltage error, offset, gain, noise and non-linearity; the <em>effective</em> number of bits is usually less than <span class="math inline">n</span>. How would you measure the effective number of bits of the ADC on your board, using only a stable voltage source and the code readings? (Hint: look at the spread of repeated readings of a constant input.)</li>
+<li><strong>Is mAh the right unit?</strong> A 2000 mAh battery at 3.7 V and a 2000 mAh battery at 1.5 V store very different energies. When does comparing capacities in mAh mislead, and what do real batteries do at high current or low temperature that our constant <span class="math inline">\eta=0.8</span> hides?</li>
+<li><strong>How cheap can a DAC be?</strong> PWM plus an RC filter is a DAC whose update speed is limited by <span class="math inline">\tau</span> and whose ripple by <span class="math inline">T/\tau</span>. For a 10-bit DAC at 3.3 V (step 3.2 mV), what <span class="math inline">\tau/T</span> is needed to keep the ripple under half a step at <span class="math inline">D=0.5</span>, and what does it do to the response time? (Use (11).)</li>
+</ol>
+<h2 id="apply">4. Apply</h2>
+<h3 id="worked-problems">4.1 Worked problems</h3>
+<p><strong>Problem 1 (divider and level shift).</strong> A 5 V sensor output must be read by a 3.3 V pin using two E12 resistors. Choose them, state the output and whether the 12-bit ADC can still tell neighbouring sensor levels apart.</p>
+<p><em>Solution.</em> Take <span class="math inline">R_1=1.8\ \text{k}\Omega</span> (top) and <span class="math inline">R_2=3.3\ \text{k}\Omega</span> (bottom): <span class="math inline">V_{\text{out}}=5\times3.3/5.1=3.235</span> V, under 3.3 V. The divider’s output resistance is <span class="math inline">1.8\parallel3.3=1.16\ \text{k}\Omega</span>, small against an ADC input that draws almost no current, so loading is negligible. A 12-bit step is 0.806 mV on the pin, which is 1.2 mV at the sensor output (the ratio is <span class="math inline">5.1/3.3</span>), so levels 2 mV apart are distinguished.</p>
+<p><strong>Problem 2 (LED resistor).</strong> A red LED (about 2.0 V) should carry about 10 mA from a 5 V supply. Find the resistor, round to E12, and the resulting current.</p>
+<p><em>Solution.</em> <span class="math inline">R=(5-2.0)/0.010=300\ \Omega</span>; E12 neighbours 270 and 330 <span class="math inline">\Omega</span>. With 330 <span class="math inline">\Omega</span> the current is about <span class="math inline">(5-2.0)/330=9.1</span> mA (using the constant <span class="math inline">V_f</span> approximation of (7)), power in the resistor <span class="math inline">0.0091^2\times330=27</span> mW.</p>
+<p><strong>Problem 3 (ADC code).</strong> A 12-bit ADC with 3.3 V reference reads 1.65 V. What is the code, and what is the voltage uncertainty?</p>
+<p><em>Solution.</em> <span class="math inline">q=3.3/4096=0.806</span> mV. Code <span class="math inline">=\lfloor1.65/0.000806\rfloor=2048</span> (as printed in Figure 1’s script for the 10 k<span class="math inline">\Omega</span> sensor). The reading is the middle of the bin, so the true voltage is within <span class="math inline">\pm q/2=\pm0.40</span> mV, with RMS error <span class="math inline">q/\sqrt{12}=0.23</span> mV.</p>
+<p><strong>Problem 4 (battery life).</strong> Using the table of Section 3.4.1 with Wi-Fi connect shortened to 0.5 s, compute the average current and battery life.</p>
+<p><em>Solution.</em> Charge <span class="math inline">=0.2\times50+0.5\times100+0.3\times140+0.2\times50+58.8\times0.01=10+50+42+10+0.588=112.59</span> mA s per 60 s: <span class="math inline">\bar I=1.8765</span> mA. Life <span class="math inline">=2000\times0.8/(24\times1.8765)=35.5</span> days.</p>
+<p><strong>Problem 5 (motor voltage).</strong> At 0.5 m/s the rover needs 15.15 rad/s at 12.1 mN m per motor. What is the motor voltage and the stall current?</p>
+<p><em>Solution.</em> <span class="math inline">V=0.2328\times15.15+(0.01214/0.2328+0.15)\times7.5=3.527+1.516=5.04</span> V; stall current <span class="math inline">6/7.5=0.8</span> A at the rated 6 V.</p>
+<h3 id="code-and-figures">4.2 Code and figures</h3>
+<pre class="python"><code>import circuits_np as C
+
+print(C.divider(3.3, 10e3, 10e3))                 # 1.65 V
+print(C.divider(3.3, 10e3, 10e3, r_load=10e3))    # 1.10 V: loading
+print(C.nearest_e12(130.0, &quot;up&quot;))                  # 150.0 ohm
+avg, period, share = C.power_budget([(&quot;awake&quot;, 96.0, 2.0), (&quot;sleep&quot;, 0.01, 58.0)])
+print(C.battery_life_days(2000, avg))              # about 20.8 days
+print(C.max_awake_seconds(60, 96.0, 0.01, 2000, 30))   # 1.383 s
+m = C.DCMotor(6.0, 0.8, 0.15, 200.0)
+print(m.volts_needed(15.15, 0.01214))              # 5.04 V</code></pre>
+<p>The full module and its README are in <code>codes/electronics/circuits_np/</code>. Its eight tests check series/parallel, the divider and its loading limit, E12 rounding, the LED load line (the operating point of 130 <span class="math inline">\Omega</span> is 10.00 mA), PWM mean and RMS with the RC ripple formula, the ADC code range and the <span class="math inline">q/\sqrt{12}</span> error to 2%, the power budget and the awake-time solution (which reproduces 30 days exactly), and the motor’s stall and no-load consistency.</p>
+<p><em>What would look different if the theory were wrong?</em> If (13) were wrong, the simulated RMS error would not fall by half per bit; it does, to better than 0.5% at every resolution. If (11) were wrong, the measured ripple would not scale as <span class="math inline">D(1-D)T/\tau</span>; it does (the first, buggy version of the simulator showed a disagreement, and the bug was in the simulator).</p>
+<h2 id="analyze">5. Analyze</h2>
+<p><strong>Limits.</strong> As <span class="math inline">R_L\to\infty</span> the divider error <span class="math inline">\to0</span>; as <span class="math inline">R_L\to0</span> the output <span class="math inline">\to0</span> (a shorted output). As <span class="math inline">\tau/T\to\infty</span> the PWM ripple <span class="math inline">\to0</span> but the response time grows without limit. As the ADC resolution grows, <span class="math inline">q\to0</span> but the ideal-converter error is then swamped by real noise.</p>
+<p><strong>Dominance.</strong> In the node’s budget, charge is dominated by the awake states (99.7% of it before the change, 99.5% after), within them by the Wi-Fi connect (67.5% before, 44.4% after). Sleep current matters only once the awake charge has been cut hard: in the “after” budget it is 0.5% of the charge, up from 0.3%.</p>
+<p><strong>Order-of-magnitude estimate.</strong> A Wi-Fi node awake for <span class="math inline">t</span> seconds out of <span class="math inline">P</span> at about 100 mA averages <span class="math inline">100\,t/P</span> mA; for a 30-day life on 2000 mAh (budget 2.2 mA) the awake fraction must be about <span class="math inline">2.2/100=2.2\%</span> of the time, i.e. 1.3 s in a minute. The exact answer was 1.383 s.</p>
+<p><strong>Sensitivity.</strong> Life is inversely proportional to the average current, so every 10% cut in awake charge buys 10% more days. Cutting the connect time from 1.3 to 0.5 s (a 62% cut of that state) cut the total charge per cycle by 42% and raised the life by 71%.</p>
+<p><strong>Failure modes.</strong> (1) <em>Floating input</em>: random readings; add a pull-up or pull-down. (2) <em>5 V into a 3.3 V pin</em>: damage; use a divider or level shifter. (3) <em>No flyback diode</em>: a switching spike can destroy the transistor. (4) <em>Driver drop ignored</em>: the rover cannot reach its speed (the table of Section 3.4.3). (5) <em>Motor stall</em>: 0.8 A and 4.8 W in a winding; a jam can burn the motor. (6) <em>A loaded divider</em>: a <span class="math inline">-33\%</span> error looks like a sensor fault. (7) <em>A battery that droops</em>: LED brightness and ADC readings that depend on the supply drift together.</p>
+<p><strong>Items used from the pedagogy checklist:</strong> limits, dominance, estimate, sensitivity, failure modes, uncertainty (the <span class="math inline">\pm q/2</span> bound), invariants (energy conservation giving <span class="math inline">k_t=k_e</span>), and constructed-versus-measured (all component values are assumed).</p>
+<h2 id="evaluate">6. Evaluate</h2>
+<p><strong>Resistor-limited LED versus a constant-current driver.</strong> The resistor costs a cent and works well for a regulated 3.3 V supply, but Figure 2 shows that a drooping battery moves the current by more than a factor of two. Use a regulated supply or a constant-current driver when brightness must be stable.</p>
+<p><strong>PWM-plus-RC versus a real DAC.</strong> The PWM DAC needs only a timer and two parts, but pays in settling time (about <span class="math inline">3\tau</span> to 95%) and ripple (<span class="math inline">V_HD(1-D)T/\tau</span>). A real DAC chip responds in microseconds with no ripple but costs more and needs a bus (Unit 4). For a slowly changing set value (a heater, an LED dimmer, a motor speed) the PWM is often the right choice.</p>
+<p><strong>Linear regulator versus switching regulator.</strong> Stepping 7.4 V down to 3.3 V with a linear regulator burns the difference as heat: at the same current it is <span class="math inline">3.3/7.4=44.6\%</span> efficient. A switching (buck) regulator is typically well above 80% (a typical figure, not computed here). For a battery node that sleeps most of the time, the regulator’s own quiet current matters as much as its efficiency, which is why many nodes run directly from a battery or use a regulator with a quiescent current of microamperes.</p>
+<p><strong>Bipolar versus MOSFET bridge.</strong> The table of Section 3.4.3 is the argument: with the same motor and battery the 0.4 V-drop bridge works and the 2 V-drop one does not. The cost difference is small compared with a redesign.</p>
+<p><strong>Context.</strong> Ohm’s law is an empirical statement about many materials, not a law of nature: it fails for the LED (Section 3.3.3), for lamps whose resistance rises with temperature and for batteries at high current. The ideal ADC of Section 3.3.6 is a model; the first thing a datasheet adds is the effective number of bits. <strong>When NOT to use these formulas:</strong> at high frequency (parasitic capacitance and inductance dominate), at high power (heat and safety dominate) and on mains voltage (do not build mains circuits from this Unit).</p>
+<p><strong>Honesty about this Unit’s numbers.</strong> The formulas (divider, load line, ripple, quantisation error, motor line) were checked by simulation against themselves, which tests the algebra and the code but not any real part. The LED, microcontroller, motor, bridge, pack and rover values are assumed.</p>
+<h2 id="create">7. Create</h2>
+<div class="create" title="What you can build from this">
+<ol type="1">
+<li><strong>Soil-moisture front end.</strong> Choose the divider resistor for a sensor that ranges from 3 to 60 k<span class="math inline">\Omega</span> so that the 12-bit ADC code changes by the most between dry and wet; compute the resolution in counts per k<span class="math inline">\Omega</span> at both ends with <code>divider</code> and <code>adc_code</code>.</li>
+<li><strong>A 10-bit PWM DAC.</strong> Using (11) and the <code>rc_pwm</code> simulator, choose <span class="math inline">R</span>, <span class="math inline">C</span> and the PWM frequency so that the ripple is under half a step (1.6 mV) at 3.3 V, and report the 95% settling time.</li>
+<li><strong>Another power budget.</strong> Add an I2C temperature sensor state (1 mA, 50 ms) to the node and recompute life with <code>power_budget</code>.</li>
+<li><strong>Combine with Unit 1.</strong> Replace the assumed currents of Unit 1’s <code>fig03_budget.py</code> by the state table of this Unit, and redraw battery life against reporting period.</li>
+<li><strong>Could become a package module:</strong> <code>iotrobotics.electronics</code> with the functions of <code>circuits_np</code>, reused for the rover’s sensors (Unit 3) and drive (Unit 9).</li>
+</ol>
+</div>
+<p><strong>Running project, Layer 1: power and drive budget.</strong> Revised requirements after this Unit (numbers from the budgets above; every component value is assumed and must be replaced by datasheet values before building):</p>
+<table>
+<caption>running-project requirements updated by Unit 2. R1 to R3 and R5 to R7 are unchanged.</caption>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">id</th>
+<th style="text-align: left;">requirement</th>
+<th style="text-align: left;">status after Unit 2</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">R4</td>
+<td style="text-align: left;">soil node lasts at least 30 days on 2000 mAh</td>
+<td style="text-align: left;">fails with 2.0 s awake (20.8 days); <strong>passes with 1.2 s awake (35.5 days)</strong>; the connect time must be cut by <span class="math inline">\ge0.62</span> s (maximum awake time 1.383 s)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R8 (new)</td>
+<td style="text-align: left;">motor drive reaches 0.5 m/s while accelerating at 0.5 m/s<span class="math inline">^2</span> on a 6.8 to 7.4 V pack</td>
+<td style="text-align: left;">needs a bridge with a drop of 0.4 V or less (duty 0.85 at 6.8 V); a 2 V drop fails</td>
+</tr>
+<tr>
+<td style="text-align: left;">R9 (new)</td>
+<td style="text-align: left;">driver and wiring survive a jammed wheel</td>
+<td style="text-align: left;">rated for 0.8 A per motor (1.6 A total) or current-limited</td>
+</tr>
+<tr>
+<td style="text-align: left;">R10 (new)</td>
+<td style="text-align: left;">rover endurance on one pack</td>
+<td style="text-align: left;">3.1 h for the 2600 mAh pack with a 0.5 A edge computer; the computer is 56% of the load</td>
+</tr>
+</tbody>
+</table>
+<h2 id="visualization-lesson">8. Visualization lesson</h2>
+<table>
+<caption>the chart types of this Unit (the twin axis and stacked bar were first used in Unit 1). Ladder: <em>remember</em> the names; <em>understand</em> what question each answers; <em>apply</em> the call; <em>analyse</em> how it misleads; <em>evaluate</em> when a table is better (the motor-driver table of Section 3.4.3 is a table because the reader wants four exact duty values); <em>create</em> a new one.</caption>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Chart type</th>
+<th style="text-align: left;">Best for</th>
+<th style="text-align: left;">How it misleads</th>
+<th style="text-align: left;">matplotlib call</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">load-line (operating-point) plot</td>
+<td style="text-align: left;">where two curves meet: a device’s I-V curve and a circuit’s constraint</td>
+<td style="text-align: left;">the dot is exact only if both curves are; with an assumed model it shows the idea, not the part</td>
+<td style="text-align: left;"><code>ax.plot(v, i)</code>, <code>ax.plot(v, (vs-v)/r, "--")</code>, <code>ax.plot(v0, i0, "o")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">staircase (transfer function) with error sawtooth</td>
+<td style="text-align: left;">the input-output map of a quantiser; error against input</td>
+<td style="text-align: left;">the sawtooth looks like a signal; label the twin axis in the unit of the error</td>
+<td style="text-align: left;"><code>ax.step(x, y, where="mid")</code>, <code>ax.twinx()</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">semilog / log-log with a theory line</td>
+<td style="text-align: left;">a measured quantity against a formula over decades</td>
+<td style="text-align: left;">on a log axis a 17% error is nearly invisible; print the numbers too</td>
+<td style="text-align: left;"><code>ax.semilogy(...)</code>, <code>ax.loglog(...)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">threshold / limit lines</td>
+<td style="text-align: left;">showing a requirement against a curve</td>
+<td style="text-align: left;">lines drawn without a label or unit read as data</td>
+<td style="text-align: left;"><code>ax.axhline(y, ls=":")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">design-space curve (maximum allowed awake time against period)</td>
+<td style="text-align: left;">the region where a requirement is met</td>
+<td style="text-align: left;">readers read the curve as a prediction; it is a boundary</td>
+<td style="text-align: left;"><code>ax.semilogx(period, tmax)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">stacked horizontal bar (charge by state)</td>
+<td style="text-align: left;">a total made of parts, two designs compared</td>
+<td style="text-align: left;">only the first segment shares a baseline; annotate shares</td>
+<td style="text-align: left;"><code>ax.barh(y, w, left=cum)</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading Figure 2 as a chart.</strong> The shared voltage axis lets one see that all four operating points have almost the same LED voltage (1.95 to 2.01 V) but very different currents: a vertical line in a load-line plot is the physics of a diode.</p>
+<h2 id="problem-set">9. Problem set</h2>
+<div class="exercise" title="Graded exercises">
+<ol type="1">
+<li>(easy) A 3.3 V supply drives a 330 <span class="math inline">\Omega</span> resistor. Find the current and the power in the resistor.</li>
+<li>(medium) Design a divider that turns a 12 V battery into at most 3.3 V for an ADC pin using two E12 resistors; give the output, the divider’s source resistance and the load resistance the ADC input must exceed for 1% accuracy.</li>
+<li>(medium-hard) Show that the RMS value of a 0/<span class="math inline">V_H</span> PWM signal is <span class="math inline">V_H\sqrt D</span> and compute the heating power in a 100 <span class="math inline">\Omega</span> resistor at 3.3 V and <span class="math inline">D=0.25</span>, then the power of a 0.825 V DC voltage across it. Why do they differ?</li>
+<li>(hard) A node draws 80 mA for 1.5 s and 0.02 mA asleep per 10-minute cycle. Find the battery life from 1000 mAh (usable fraction 0.8), and the longest awake time that gives 90 days.</li>
+<li>(hardest) Using (17) with the rover’s motor, find the largest slope (incline, as a percentage grade) the rover can climb at 0.3 m/s with the MOSFET bridge on a 6.8 V pack. State your assumptions and what limits it first: voltage, current rating or traction.</li>
+</ol>
+</div>
+<h2 id="retrieval-practice-and-recap">10. Retrieval practice and recap</h2>
+<p><strong>Answers to the Section 2 predictions.</strong></p>
+<ol type="1">
+<li>About 1.1 V (<span class="math inline">3.3\times5/15=1.10</span> V; error <span class="math inline">-33\%</span>).</li>
+<li>About 3 mV (3.22 mV).</li>
+<li>No: at most <span class="math inline">7.4-2=5.4</span> V.</li>
+</ol>
+<p><strong>Answers to the Section 2 recall quiz.</strong></p>
+<ol type="1">
+<li><span class="math inline">3.3/330=10</span> mA; <span class="math inline">P=VI=33</span> mW.</li>
+<li>It is connected to nothing, so its voltage is set by stray charge and neighbouring signals; a pull-up or pull-down fixes the default.</li>
+<li>The average voltage (<span class="math inline">DV_H</span>), and so the average power or motor speed.</li>
+<li>The reading is the middle of the bin the input fell in, so the true value is within half a step.</li>
+<li>The short awake time: the awake states hold 99.7% of the charge in our budget; deep sleep only 0.3%.</li>
+</ol>
+<p><strong>Explain it to a friend.</strong></p>
+<ul>
+<li>Why does connecting a sensor to a divider change the divider’s voltage?</li>
+<li>Why does a motor driver with a big voltage drop make a robot slow, even if the motor is strong?</li>
+<li>Why is a long deep sleep not enough to make a battery last?</li>
+</ul>
+<p><strong>Re-derive by hand tomorrow, without looking:</strong> (a) the divider formula from series resistance and Ohm’s law; (b) the quantisation error <span class="math inline">q/\sqrt{12}</span>; (c) the maximum awake time for a given battery life.</p>
+<h2 id="where-next">11. Where next</h2>
+<ul>
+<li><strong>Unit 3</strong> takes the voltage the ADC delivers and asks how good a measurement it is: sensor specifications, calibration, noise, sampling rate, aliasing and filters, and the motor’s encoder.</li>
+<li>Terms named here but not taught: Nyquist and aliasing (Unit 3), microcontroller GPIO and deep sleep (Unit 4), Wi-Fi and MQTT (Unit 5), stall detection and PID (Unit 9). They are registered in CURRICULUM.md.</li>
+<li><strong>Open threads:</strong> all component values are assumed, not measured (replace with datasheet values); the effective number of bits of a real ADC is not measured; the 0.5 s Wi-Fi connect time is an assumption that Unit 4 must justify.</li>
+</ul>
+<p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u1.html">&larr; Foundations</a><a class="btn" href="u3.html">Sensors &rarr;</a></p></article></div></main>
+<footer><div class="wrap">Internet of Things and Robotics crash course · Code is MIT-licensed; PDFs are for study use. Companion to the <a href="../../index.html">Generative AI and LLMs course</a>.</div></footer>
+<script>
+document.getElementById('theme').onclick=function(){var d=document.documentElement,c=d.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'),n=c==='dark'?'light':'dark';d.dataset.theme=n;try{localStorage.setItem('theme',n)}catch(e){}};
+</script>
+<script src="../../assets/vendor/katex/katex.min.js"></script><script>document.querySelectorAll(".math").forEach(function(n){var d=n.classList.contains("display");var t=n.textContent.replace(/^\\[\(\[]|\\[\)\]]$/g,"");try{katex.render(t,n,{displayMode:d,throwOnError:false})}catch(e){}});</script></body></html>

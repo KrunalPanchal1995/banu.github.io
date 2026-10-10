@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unit 5: Networking and IoT Communication Protocols: From Radio to MQTT · IoT and Robotics</title>
+<meta name="description" content="From volts and sensors to MQTT, security, kinematics, control, localisation and navigation, built around one running project: a Smart Greenhouse Rover. Twelve units with a PDF and runnable code each, a 14-lab track and an assessment bank. Built for a B.Tech student; simulation-first, no hardware needed.">
+<link rel="stylesheet" href="../../assets/css/style.css"><link rel="stylesheet" href="../assets/css/iot.css">
+<script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="stylesheet" href="../../assets/vendor/katex/katex.min.css"></head><body>
+<header class="site-head"><div class="wrap">
+<a class="brand" href="../index.html">IoT <span>&amp;</span> Robotics<span class="long"> crash course</span></a>
+<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
+</div></header>
+<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 5</strong><a href="#session-map">Session map</a><a href="#terms-the-term-tree">1. Terms: the term tree</a><a href="#remember">2. Remember</a><a href="#understand-the-derivation">3. Understand: the derivation</a><a href="#apply">4. Apply</a><a href="#analyze">5. Analyze</a><a href="#evaluate">6. Evaluate</a><a href="#create">7. Create</a><a href="#visualization-lesson">8. Visualization lesson</a><a href="#problem-set">9. Problem set</a><a href="#retrieval-practice-and-recap">10. Retrieval practice and recap</a><a href="#where-next">11. Where next</a></aside><article class="doc"><p><span class="chip">Unit 5</span> <span class="chip ">ready</span></p><h1>Networking and IoT Communication Protocols: From Radio to MQTT</h1><p class="lede">Radios and link budgets, HTTP versus MQTT versus CoAP, and a home-made MQTT broker checked against real ones.</p><div class="dl"><a class="btn primary" href="../downloads/u5/u5-notes.pdf" download>PDF notes<small>814 KB</small></a><a class="btn" href="../downloads/u5/u5-notes.docx" download>Word (.docx)<small>620 KB</small></a><a class="btn" href="../downloads/u5/u5-code.zip" download>All code (.zip)<small>35 KB</small></a></div><h2 id="session-map">Session map</h2>
+<div class="keyidea" title="Outcome of this session">
+<p>After this session you can:</p>
+<ol type="1">
+<li>place Wi-Fi, BLE, Zigbee, LoRa and NB-IoT by range, data rate and power, and compute a free-space link budget;</li>
+<li>say what each of IP, TCP, UDP, HTTP, MQTT and CoAP adds to a message, and count the bytes and round trips needed to send one sensor reading with each;</li>
+<li>explain MQTT: broker, topics, the <code>+</code> and <code>#</code> wildcards, QoS 0/1/2, retained messages, last will and keep-alive, and write a PUBLISH packet byte by byte;</li>
+<li>derive the expected number of packets and duplicates of each QoS level under packet loss, and see why QoS 2 with bounded retries can deliver <em>less</em> than QoS 1;</li>
+<li>run and read a conformance check of a home-made MQTT broker and client against two independent implementations (paho-mqtt and amqtt), including what they disagree about.</li>
+</ol>
+</div>
+<ul>
+<li><strong>Prerequisites:</strong> Unit 4 (state machine, retries, the node’s cycle), Unit 2 (RC rise time, decibel-free arithmetic), Unit 3 (aliasing is not needed). Logarithms (decibels are defined in Section 3.4.2).</li>
+<li><strong>Difficulty ladder used:</strong> easy → medium → medium-hard → hard (Sections 3.1 to 3.4); the hardest tier is posed as open questions in Section 3.5.</li>
+<li><strong>Deliverables:</strong> this document (.tex, .pdf, .docx), 6 figures, the module <code>codes/net/mqtt_mini/</code> (<code>mqtt_proto.py</code> packet codec and topic matching, <code>broker.py</code>, <code>client.py</code>, <code>netcalc.py</code> size, link-budget and QoS calculators, <code>conformance.py</code>; 10 tests), and the conformance log <code>conformance_log.txt</code> (17 of 17 checks).</li>
+<li><strong>Source anchors:</strong> the MQTT 3.1.1 specification (OASIS, 2014), https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html, <strong>fetched and read on 2026-10-11</strong> for four statements: Section 2.2.3 Table 2.4 (the remaining-length field and its byte ranges), Section 3.8.4 (the delivery QoS “MUST be the minimum of the QoS of the originally published message and the maximum QoS granted by the Server”), Section 4.7.1.2 (<code>#</code> also matches the parent level) and Section 4.7.2 requirement [MQTT-4.7.2-1] (a server must not match topic names beginning with <code>$</code> against filters beginning with a wildcard). <strong>The CoAP byte layout is written from memory of RFC 7252 and is unverified; it is used only to estimate sizes.</strong> The radio powers, sensitivities, data rates, currents, the 40 ms round-trip time and the packet-loss values are <strong>assumed typical numbers</strong>, not measurements. The wire-size model is simplified (Section 3.4.1).</li>
+</ul>
+<h2 id="terms-the-term-tree">1. Terms: the term tree</h2>
+<table>
+<colgroup>
+<col style="width: 22%" />
+<col style="width: 14%" />
+<col style="width: 37%" />
+<col style="width: 13%" />
+<col style="width: 10%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Term</th>
+<th style="text-align: center;">Symbol</th>
+<th style="text-align: left;">One-line meaning</th>
+<th style="text-align: center;">Where it appears</th>
+<th style="text-align: center;">New / known</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">protocol</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">an agreed format and set of rules for messages between two parties</td>
+<td style="text-align: center;">2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">packet and header</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a unit of data sent over a network, with a header that says where it goes</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">IP address</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the number that names a device on a network</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">TCP</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">reliable, ordered byte stream between two endpoints, set up by a handshake</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">UDP</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">single unreliable datagrams with no handshake</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">round-trip time</td>
+<td style="text-align: center;">RTT</td>
+<td style="text-align: left;">time for a message to reach the other end and the reply to come back</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">HTTP</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">request/response protocol of the web, over TCP</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">CoAP</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">small request/response protocol for constrained devices, over UDP</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">publish/subscribe</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">senders publish to named topics; receivers subscribe to topics; neither knows the other</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">MQTT</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a publish/subscribe protocol over TCP with very small headers</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">broker</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the server that receives published messages and forwards them to subscribers</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">topic and topic filter</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a slash-separated name for a message stream, and a pattern that selects topics</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">wildcard</td>
+<td style="text-align: center;"><code>+</code>, <code>#</code></td>
+<td style="text-align: left;"><code>+</code> matches one topic level; <code>#</code> matches all remaining levels</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">QoS (quality of service)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the delivery guarantee of an MQTT message: 0, 1 or 2</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">retained message</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the last message on a topic, kept by the broker and given to new subscribers</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">last will</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a message the broker publishes if a client vanishes without saying goodbye</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">keep-alive</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the longest silence a client may keep before the broker treats it as gone</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">packet identifier</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a number that pairs a message with its acknowledgement</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">duplicate delivery</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the same message reaching the receiver more than once</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">free-space path loss</td>
+<td style="text-align: center;">FSPL</td>
+<td style="text-align: left;">signal power lost over a distance in empty space, in dB</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">link budget</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">transmit power minus receiver sensitivity: the path loss a link can tolerate</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">receiver sensitivity</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the weakest signal a receiver can still decode</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">decibel</td>
+<td style="text-align: center;">dB</td>
+<td style="text-align: left;">ten times the base-10 logarithm of a power ratio</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">Wi-Fi, BLE, Zigbee, LoRa, NB-IoT</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">radio technologies compared in Section 3.4</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+</tbody>
+</table>
+<p>Terms <em>used but not taught here</em>: TLS (named only, Unit 7), JSON and CBOR payloads (Unit 6), MQTT-SN and mesh routing (named only), DNS and DHCP (named only).</p>
+<h2 id="remember">2. Remember</h2>
+<div class="definition" title="A protocol, a packet and the layers">
+<p>A <strong>protocol</strong> is an agreement on how to format and sequence messages. Data on a network travels in <strong>packets</strong>: a <strong>header</strong> (who sent it, who it is for, how long it is) followed by the data. Protocols are stacked in layers, each wrapping the one above in its own header (Figure 1): the <em>link</em> layer moves bits over a radio or wire (Wi-Fi, BLE, Ethernet); the <em>network</em> layer (IP, with an <strong>IP address</strong> per device) routes packets between networks; the <em>transport</em> layer (TCP or UDP) turns packets into a usable service; the <em>application</em> layer (HTTP, MQTT, CoAP) is what your program speaks.</p>
+</div>
+<div class="definition" title="TCP and UDP in one line each">
+<p><strong>TCP</strong> gives a reliable, ordered stream: before any data, the two ends exchange three packets (a <em>handshake</em>), lost packets are re-sent automatically, and closing takes another four. <strong>UDP</strong> just sends a packet: no handshake, no guarantee, and only 8 bytes of header.</p>
+</div>
+<div class="definition" title="Three application protocols">
+<p><strong>HTTP</strong> is the web’s request/response protocol: text headers, easy to debug, large (over a hundred bytes of header for a tiny reading). <strong>MQTT</strong> is a <em>publish/subscribe</em> protocol: devices publish to named <strong>topics</strong> on a <strong>broker</strong>, others subscribe by topic, and the two sides never need to know each other. Its packets are tiny (a 2-byte fixed header). <strong>CoAP</strong> is a small request/response protocol over UDP for constrained devices.</p>
+</div>
+<p><strong>Memory hooks.</strong></p>
+<ul>
+<li><em>HTTP is a letter, MQTT is a telegram, CoAP is a postcard.</em> All three carry the same four digits; they differ in how much paper surrounds them.</li>
+<li><em>A broker is a post office with a sorting rule:</em> you hand in a message with a topic; it delivers copies to everyone who asked for that topic.</li>
+<li><em>QoS 0 = shout, QoS 1 = shout until you hear “OK” (you may be heard twice), QoS 2 = a four-step handshake so you are heard exactly once.</em></li>
+<li><em>A last will is a message left with a friend, to be read out if you do not come back.</em></li>
+</ul>
+<p><strong>Before you read on: three predictions</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>A sensor reading is four bytes (“1832”). Sent as an HTTP POST it needs about how many bytes at the application layer: 10, 40 or over 100? And as an MQTT PUBLISH?</li>
+<li>Over a link that loses 30% of packets, with retries until acknowledged, how many packets does one QoS 1 message take on average: 2, about 3.5 or about 10?</li>
+<li>Is a LoRa link that reaches kilometres also cheap in energy per message?</li>
+</ol>
+<p><strong>Recall quiz</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>Name the four layers in order from the application down to the radio.</li>
+<li>What does the <code>+</code> wildcard match, and what does <code>#</code> match?</li>
+<li>What is a retained message for?</li>
+<li>When does a broker publish a client’s last will?</li>
+<li>Why can a sleeping battery node not benefit from a long-lived MQTT connection?</li>
+</ol>
+<h2 id="understand-the-derivation">3. Understand: the derivation</h2>
+<h3 id="tier-1-easy-intuition-and-a-picture">3.1 Tier 1 (easy): intuition and a picture</h3>
+<p>Figure 1 shows the layers a reading passes through. The soil node’s four-byte reading starts in the application layer, is wrapped by MQTT, then by TCP, then by IP, and finally is sent as radio bits; at the broker the wrappers are removed in the opposite order. Every wrapper adds bytes. For a four-byte reading, <strong>the wrappers are bigger than the reading by a factor of ten to a hundred</strong>, which is why the choice of protocol matters for a battery node.</p>
+<figure>
+<img src="../assets/fig/u5/fig01_stack.png" style="width:90.0%" alt="The protocol stack seen from an IoT node. A message goes down the stack at the sender (each layer adds a header) and up at the receiver. MQTT and HTTP run over TCP, CoAP over UDP; IP adds 20 bytes, TCP 20, UDP 8." />
+<figcaption aria-hidden="true">The protocol stack seen from an IoT node. A message goes down the stack at the sender (each layer adds a header) and up at the receiver. MQTT and HTTP run over TCP, CoAP over UDP; IP adds 20 bytes, TCP 20, UDP 8.</figcaption>
+</figure>
+<p>The shape of MQTT is in Figure 2. In the usual request/response style (HTTP), the sender must know the receiver’s address and wait for it. In <strong>publish/subscribe</strong>, a sender <em>publishes</em> a message to a named <strong>topic</strong> at a <strong>broker</strong>, and any number of receivers have <em>subscribed</em> to topics they care about; the broker forwards. The soil node does not know the dashboard exists; the dashboard does not know there are two nodes. A new alert service can be added by subscribing, with no change to anything else. That decoupling is the reason MQTT is so common in IoT.</p>
+<figure>
+<img src="../assets/fig/u5/fig05_pubsub.png" style="width:90.0%" alt="Publish/subscribe on the greenhouse. Soil nodes and the rover publish to topics; the broker routes them by topic filter (‘+’ matches one level, ‘#’ all levels below), keeps retained values and publishes a last will for a client that disappears; subscribers receive what they asked for." />
+<figcaption aria-hidden="true">Publish/subscribe on the greenhouse. Soil nodes and the rover publish to topics; the broker routes them by topic filter (‘+’ matches one level, ‘#’ all levels below), keeps retained values and publishes a last will for a client that disappears; subscribers receive what they asked for.</figcaption>
+</figure>
+<h3 id="tier-2-medium-the-definitions-made-precise">3.2 Tier 2 (medium): the definitions made precise</h3>
+<h4 id="why-tcp-costs-round-trips">3.2.1 Why TCP costs round trips</h4>
+<p>A TCP connection starts with a three-packet handshake (SYN, SYN-ACK, ACK): the client cannot send data until the server’s reply returns, so a connection costs <strong>one round trip time (RTT)</strong> before the first data byte. HTTP on a fresh connection then needs one more RTT for the request and response: <strong>2 RTT</strong>. MQTT on a fresh connection needs one RTT for TCP, one for CONNECT and CONNACK, and one for PUBLISH and its acknowledgement: <strong>3 RTT</strong>. CoAP over UDP has no handshake: <strong>1 RTT</strong>. With an assumed RTT of 40 ms these are 80, 120 and 40 ms. (Adding TLS encryption, Unit 7, costs more round trips and kilobytes of certificates; that is not included in any number below.)</p>
+<h4 id="what-mqtt-adds">3.2.2 What MQTT adds</h4>
+<p>An MQTT session has a few parts, each defined in Section 3.3: a <strong>client</strong> connects to a <strong>broker</strong> (CONNECT/CONNACK), <strong>publishes</strong> messages (PUBLISH) to <strong>topics</strong> at one of three <strong>QoS</strong> levels, <strong>subscribes</strong> with <strong>topic filters</strong> that may contain <strong>wildcards</strong> (SUBSCRIBE/SUBACK), may ask the broker to keep the last message of a topic (<strong>retained</strong>), may leave a <strong>last will</strong>, and promises to speak at least once per <strong>keep-alive</strong> interval (PINGREQ/PINGRESP if idle). The broker is a program; our course builds one (<code>broker.py</code>, 150 lines) and checks it against other people’s.</p>
+<h3 id="tier-3-medium-hard-mqtt-from-the-bytes-up">3.3 Tier 3 (medium-hard): MQTT from the bytes up</h3>
+<h4 id="the-packet-format-and-the-remaining-length-field">3.3.1 The packet format and the remaining-length field</h4>
+<p>Every MQTT packet begins with a <strong>fixed header</strong>: one byte whose high four bits are the packet type (CONNECT 1, CONNACK 2, PUBLISH 3, PUBACK 4, PUBREC 5, PUBREL 6, PUBCOMP 7, SUBSCRIBE 8, SUBACK 9, UNSUBSCRIBE 10, UNSUBACK 11, PINGREQ 12, PINGRESP 13, DISCONNECT 14) and whose low four bits are flags; then the <strong>remaining length</strong> (the number of bytes after the fixed header), encoded as a variable-length integer. The encoding uses seven bits of each byte for the value and the eighth bit to say “another byte follows”, least significant group first: with <span class="math inline">n</span> the value, <span class="math display"> n=\sum_{i=0}^{k-1}d_i\,128^i,\qquad d_i\in[0,127],\ \text{byte}_i=d_i+128\cdot[i&lt;k-1],\quad k\le4. \tag{1}</span> Small packets cost one byte; the largest value, <span class="math inline">128^4-1=268{,}435{,}455</span>, needs four. Table 2.4 of the specification lists the boundaries, and our encoder reproduces every one of them (tests): 127 is <code>7f</code>; 128 is <code>80 01</code>; 16,383 is <code>ff 7f</code>; 16,384 is <code>80 80 01</code>; 2,097,151 is <code>ff ff 7f</code>; 2,097,152 is <code>80 80 80 01</code>; and 268,435,455 is <code>ff ff ff 7f</code>. A value above 268,435,455, or a fifth continuation byte on the wire, is rejected as malformed.</p>
+<h4 id="one-publish-byte-by-byte">3.3.2 One PUBLISH, byte by byte</h4>
+<p>Take topic <code>greenhouse/zone1/soil</code> (21 characters), payload <code>1832</code> and QoS 1. A PUBLISH has the fixed header (type 3, flags: duplicate flag 0, QoS in bits 2 and 1, retain flag 0, so the byte is <code>0x32</code>), the remaining length, a two-byte topic length, the topic, a two-byte <strong>packet identifier</strong> (present only for QoS above 0) and the payload. The remaining length is <span class="math inline">2+21+2+4=29=\mathtt{0x1d}</span>, and the whole packet is <span class="math inline">1+1+29=31</span> bytes (Figure 3): <code>32 1d 00 15</code> + the 21 topic bytes + <code>00 01</code> + <code>31 38 33 32</code>. At QoS 0 the packet identifier is absent: 29 bytes. Of the 31 bytes, 25 are protocol and 4 are data, and 21 of the 25 are the topic name, which is the best argument for <strong>short topic names</strong> on a constrained link.</p>
+<figure>
+<img src="../assets/fig/u5/fig06_packet.png" style="width:95.0%" alt="The 31 bytes of one MQTT PUBLISH (QoS 1) for topic greenhouse/zone1/soil and payload 1832, byte by byte (hexadecimal): the type and flags byte, the remaining length, the topic length and topic, the packet identifier and the four payload bytes." />
+<figcaption aria-hidden="true">The 31 bytes of one MQTT PUBLISH (QoS 1) for topic greenhouse/zone1/soil and payload 1832, byte by byte (hexadecimal): the type and flags byte, the remaining length, the topic length and topic, the packet identifier and the four payload bytes.</figcaption>
+</figure>
+<h4 id="topics-wildcards-and-matching">3.3.3 Topics, wildcards and matching</h4>
+<p>A <strong>topic</strong> is a string of levels separated by <code>/</code>. A <strong>topic filter</strong> may contain two wildcards: <code>+</code> matches exactly one level (which may be empty), <code>#</code> matches any number of levels including <em>the parent level itself</em> (and must be the last character). Specification Section 4.7.1.2 says <code>sport/#</code> “also matches the singular <code>sport</code>”. A topic that starts with <code>$</code> (reserved for the broker’s own information) is never matched by a filter that starts with <code>+</code> or <code>#</code> (requirement [MQTT-4.7.2-1]). The module’s <code>topic_matches</code> implements these rules; its test table includes: <code>greenhouse/+/soil</code> matches <code>greenhouse/zone1/soil</code> but not <code>greenhouse/zone1/sub/soil</code>; <code>sport/tennis/player1/#</code> matches <code>sport/tennis/player1</code> and <code>sport/tennis/player1/ranking/x</code>; <code>#</code> matches <code>a/b/c</code> but not <code>$SYS/broker</code>; <code>+/+</code> matches <code>/finance</code> (two levels, the first empty) while <code>+</code> alone does not. <strong>Topic design is data modelling:</strong> <code>greenhouse/&lt;zone&gt;/&lt;quantity&gt;</code> lets a dashboard subscribe to <code>greenhouse/+/soil</code> for all zones, and an alert service to <code>greenhouse/#</code>.</p>
+<h4 id="qos-the-cost-of-a-guarantee">3.3.4 QoS: the cost of a guarantee</h4>
+<p>MQTT has three delivery levels, each a small protocol of its own.</p>
+<ul>
+<li><strong>QoS 0 (at most once).</strong> PUBLISH is sent once, no acknowledgement. If a packet is lost, the message is lost.</li>
+<li><strong>QoS 1 (at least once).</strong> The sender keeps the message until it receives PUBACK (carrying the packet identifier) and re-sends it with the duplicate flag if it does not; the message can arrive more than once.</li>
+<li><strong>QoS 2 (exactly once).</strong> Four packets: PUBLISH, PUBREC (“received, stored”), PUBREL (“release”), PUBCOMP (“complete”). The receiver stores the message under the packet identifier and delivers it to the application only when it sees PUBREL, so a repeated PUBLISH or PUBREL does not deliver twice.</li>
+</ul>
+<p>The delivered QoS to a subscriber is <span class="math inline">\min(\text{published},\text{granted})</span> (Section 3.8.4). Now <em>cost</em>. Suppose each packet is lost independently with probability <span class="math inline">p</span> and the sender repeats a step until its acknowledgement arrives. A round of QoS 1 succeeds when both the PUBLISH and the PUBACK get through, with probability <span class="math inline">q=(1-p)^2</span>, so the expected number of PUBLISH transmissions is <span class="math inline">1/q=1/(1-p)^2</span> (a geometric distribution). The PUBLISH reaches the receiver in a fraction <span class="math inline">(1-p)</span> of these, so the PUBACKs sent number <span class="math inline">1/(1-p)</span> on average. The expected packets on the wire (both directions) are <span class="math display"> N_1=\frac{1}{(1-p)^2}+\frac{1}{1-p},\qquad N_2=2N_1,\qquad N_0=1. \tag{2}</span> QoS 2 has two such steps, PUBLISH/PUBREC and PUBREL/PUBCOMP. The receiver sees the PUBLISH <span class="math inline">1/(1-p)</span> times on average; the first copy is the message and the rest are <strong>duplicates</strong>, so <span class="math display"> \text{duplicates (QoS 1)}=\frac{1}{1-p}-1=\frac{p}{1-p},\qquad\text{duplicates (QoS 2)}=0. \tag{3}</span> We checked both against a simulation (40,000 messages per loss rate; Figure 6, left):</p>
+<table>
+<caption>expected packets per message and duplicates for the three QoS levels (retry without limit). Prediction 2 of Section 2: at 30% loss, QoS 1 takes about 3.5 packets. QoS 2 never delivers a duplicate in the simulation.</caption>
+<colgroup>
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: right;">loss <span class="math inline">p</span></th>
+<th style="text-align: right;"><span class="math inline">N_0</span></th>
+<th style="text-align: right;"><span class="math inline">N_1</span> formula</th>
+<th style="text-align: right;"><span class="math inline">N_1</span> simulated</th>
+<th style="text-align: right;"><span class="math inline">N_2</span> formula</th>
+<th style="text-align: right;"><span class="math inline">N_2</span> simulated</th>
+<th style="text-align: right;">QoS 1 duplicates, formula</th>
+<th style="text-align: right;">simulated</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">2.00</td>
+<td style="text-align: right;">2.00</td>
+<td style="text-align: right;">4.00</td>
+<td style="text-align: right;">4.00</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.1</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">2.35</td>
+<td style="text-align: right;">2.34</td>
+<td style="text-align: right;">4.69</td>
+<td style="text-align: right;">4.69</td>
+<td style="text-align: right;">0.111</td>
+<td style="text-align: right;">0.110</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.3</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">3.47</td>
+<td style="text-align: right;">3.47</td>
+<td style="text-align: right;">6.94</td>
+<td style="text-align: right;">6.91</td>
+<td style="text-align: right;">0.429</td>
+<td style="text-align: right;">0.428</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.5</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">6.00</td>
+<td style="text-align: right;">6.01</td>
+<td style="text-align: right;">12.00</td>
+<td style="text-align: right;">12.00</td>
+<td style="text-align: right;">1.000</td>
+<td style="text-align: right;">1.005</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Bounded retries.</strong> A battery node cannot retry forever (Unit 4). Suppose at most 3 attempts per step. The sender of QoS 1 stops early only after receiving PUBACK, which implies the message arrived, so the message is delivered unless all three PUBLISH packets are lost: <span class="math inline">P_1=1-p^3</span>. QoS 0 delivers with probability <span class="math inline">1-p</span>. For QoS 2 the message is delivered only when the receiver has seen PUBREL, and that needs the first step (PUBLISH answered by PUBREC) to finish within 3 attempts, probability <span class="math inline">1-(1-q)^3</span> with <span class="math inline">q=(1-p)^2</span>, and then a PUBREL to arrive within 3 attempts, probability <span class="math inline">1-p^3</span>: <span class="math display"> P_0=1-p,\qquad P_1=1-p^3,\qquad P_2=\Big(1-\big(1-(1-p)^2\big)^3\Big)\big(1-p^3\big). \tag{4}</span> At <span class="math inline">p=0.3</span>: <span class="math inline">P_0=0.700</span>, <span class="math inline">P_1=0.973</span>, <span class="math inline">P_2=0.867\times0.973=0.844</span>; the simulation gives 0.702, 0.973 and 0.844. At <span class="math inline">p=0.5</span>: 0.500, 0.875 and 0.506 (simulated 0.500, 0.872, 0.506). <strong>QoS 2 with bounded retries delivers less than QoS 1</strong> (Figure 6, right), because the sender can give up in the middle of the handshake and the receiver then never releases the message. “Exactly once” is a promise that holds only if both ends keep retrying (and remember state across reconnection, which our course broker does not do). For a node that sleeps, QoS 1 plus idempotent messages is usually the better engineering.</p>
+<figure>
+<img src="../assets/fig/u5/fig04_qos.png" style="width:95.0%" alt="Left: expected packets on the wire per message against the loss probability for QoS 0, 1 and 2 with unlimited retries (lines: formulas; dots: simulation). Right: percentage of messages delivered when the sender makes at most 3 attempts per step: QoS 1 stays near 100%, QoS 0 falls as 1-p, and QoS 2 falls faster than QoS 1 because it needs two steps to finish." />
+<figcaption aria-hidden="true">Left: expected packets on the wire per message against the loss probability for QoS 0, 1 and 2 with unlimited retries (lines: formulas; dots: simulation). Right: percentage of messages delivered when the sender makes at most 3 attempts per step: QoS 1 stays near 100%, QoS 0 falls as <span class="math inline">1-p</span>, and QoS 2 falls faster than QoS 1 because it needs two steps to finish.</figcaption>
+</figure>
+<h4 id="retained-messages-last-will-and-keep-alive">3.3.5 Retained messages, last will and keep-alive</h4>
+<p>A message published with the <em>retain</em> flag is stored by the broker, one per topic, and delivered (with the flag set) to every client that subscribes to a matching filter later; publishing an empty retained payload clears it. This gives a dashboard the <strong>last known value</strong> at once instead of waiting for the next report. A client may register a <strong>last will</strong> (a topic, payload, QoS and retain flag) in its CONNECT; the broker publishes it if the connection closes <em>without</em> a DISCONNECT packet, whether the cause is a crash, a dead battery or a network failure, and discards it after a clean DISCONNECT. The <strong>keep-alive</strong> interval tells the broker how long it may hear nothing: if it receives nothing for 1.5 times the interval it declares the client gone and publishes the will; an idle client sends PINGREQ and the broker answers PINGRESP. A common pattern combines the three on one status topic: on connect publish <code>online</code> (retained), and register a will that publishes <code>offline</code> (retained) on the same topic.</p>
+<p><em>This pattern does not suit a node that sleeps.</em> A deep-sleeping node closes the connection cleanly each cycle (no will) or, if it simply cuts the radio, looks like a crash (a false “offline” each minute). For such a node the dashboard should treat a missing reading as stale after, say, three reporting periods (Unit 6), and the will is useful only for always-on devices such as the rover.</p>
+<h3 id="tier-4-hard-bytes-round-trips-and-radios">3.4 Tier 4 (hard): bytes, round trips and radios</h3>
+<h4 id="what-one-reading-costs-on-the-wire">3.4.1 What one reading costs on the wire</h4>
+<p>We count the bytes for the reading <code>1832</code> (four payload bytes) sent to <code>greenhouse/zone1/soil</code>, with the simplified model: each application message is one IP packet with <strong>40 bytes of IPv4+TCP header</strong> (28 for IPv4+UDP), a TCP handshake is 3 packets and a close 4, and there is no TLS, no TCP options and no link-layer framing (all of which would add bytes). Application layer, built by the module: an HTTP POST with minimal headers is <strong>119 bytes</strong> (and a 46-byte response); an MQTT PUBLISH is <strong>29 bytes</strong> at QoS 0 and <strong>31</strong> at QoS 1; a CoAP POST is <strong>32</strong> bytes (using the layout of Section 3.2.2, unverified against the RFC). Over the whole exchange (Figure 4, right; one reading per minute):</p>
+<table>
+<caption>wire bytes to deliver one four-byte reading (simplified model). An MQTT connection kept open also costs a PINGREQ and PINGRESP (84 bytes) per keep-alive interval, 121 kB per day at 60 s.</caption>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 26%" />
+<col style="width: 26%" />
+<col style="width: 26%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">exchange</th>
+<th style="text-align: right;">bytes per reading</th>
+<th style="text-align: right;">per day at 1 per minute</th>
+<th style="text-align: right;">payload share</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">HTTP, new TCP connection each time</td>
+<td style="text-align: right;">525</td>
+<td style="text-align: right;">756.0 kB</td>
+<td style="text-align: right;">0.76%</td>
+</tr>
+<tr>
+<td style="text-align: left;">MQTT QoS 0, new connection each wake</td>
+<td style="text-align: right;">494</td>
+<td style="text-align: right;">711.4 kB</td>
+<td style="text-align: right;">0.81%</td>
+</tr>
+<tr>
+<td style="text-align: left;">MQTT QoS 1, new connection each wake</td>
+<td style="text-align: right;">540</td>
+<td style="text-align: right;">777.6 kB</td>
+<td style="text-align: right;">0.74%</td>
+</tr>
+<tr>
+<td style="text-align: left;">MQTT QoS 2, new connection each wake</td>
+<td style="text-align: right;">628</td>
+<td style="text-align: right;">904.3 kB</td>
+<td style="text-align: right;">0.64%</td>
+</tr>
+<tr>
+<td style="text-align: left;">MQTT QoS 1, connection kept open</td>
+<td style="text-align: right;">115</td>
+<td style="text-align: right;">165.6 kB</td>
+<td style="text-align: right;">3.48%</td>
+</tr>
+<tr>
+<td style="text-align: left;">MQTT QoS 0, connection kept open</td>
+<td style="text-align: right;">69</td>
+<td style="text-align: right;">99.4 kB</td>
+<td style="text-align: right;">5.80%</td>
+</tr>
+<tr>
+<td style="text-align: left;">CoAP confirmable over UDP</td>
+<td style="text-align: right;">92</td>
+<td style="text-align: right;">132.5 kB</td>
+<td style="text-align: right;">4.35%</td>
+</tr>
+</tbody>
+</table>
+<p>Prediction 1 of Section 2: HTTP needs over a hundred bytes; MQTT about thirty. The table holds the less comfortable truth for <strong>battery</strong> nodes: MQTT is small <em>per message</em>, but a node that sleeps cannot keep the connection, so each report pays for the TCP handshake and the CONNECT (540 bytes, 3 RTT, 120 ms at 40 ms RTT), no better than HTTP’s 525 bytes and 2 RTT. The savings of MQTT appear when the connection stays open (115 bytes: a mains-powered rover, a gateway), or when a UDP protocol removes the handshake (CoAP: 92 bytes, 1 RTT). Hence the common architecture: <strong>sleeping sensors speak a connectionless protocol to a nearby gateway, which keeps one MQTT connection to the broker.</strong></p>
+<figure>
+<img src="../assets/fig/u5/fig02_bytes.png" style="width:95.0%" alt="Left: application-layer size of one four-byte reading as an HTTP POST (119 bytes), an MQTT PUBLISH at QoS 0 (29) and QoS 1 (31) and a CoAP POST (32); the dotted line is the 4-byte payload. Right: bytes on the wire for the whole exchange (simplified model): HTTP on a new connection 525, MQTT QoS 1 on a new connection 540, MQTT QoS 1 on an open connection 115, CoAP over UDP 92." />
+<figcaption aria-hidden="true">Left: application-layer size of one four-byte reading as an HTTP POST (119 bytes), an MQTT PUBLISH at QoS 0 (29) and QoS 1 (31) and a CoAP POST (32); the dotted line is the 4-byte payload. Right: bytes on the wire for the whole exchange (simplified model): HTTP on a new connection 525, MQTT QoS 1 on a new connection 540, MQTT QoS 1 on an open connection 115, CoAP over UDP 92.</figcaption>
+</figure>
+<h4 id="radios-free-space-loss-and-the-link-budget">3.4.2 Radios: free-space loss and the link budget</h4>
+<p>A radio signal spreads out: the power at distance <span class="math inline">d</span> from an isotropic transmitter is spread over a sphere of area <span class="math inline">4\pi d^2</span>, and a receiving antenna of effective area <span class="math inline">\lambda^2/4\pi</span> catches a fraction of it, so the ratio of received to transmitted power is <span class="math inline">\big(\lambda/4\pi d\big)^2</span>. The inverse, the <strong>free-space path loss</strong>, is <span class="math inline">(4\pi d/\lambda)^2=(4\pi df/c)^2</span> with <span class="math inline">c</span> the speed of light. Engineers use <strong>decibels</strong> (dB), ten times the base-10 logarithm of a power ratio, so that multiplications become additions: <span class="math display"> \mathrm{FSPL}=20\log_{10}d+20\log_{10}f+20\log_{10}\frac{4\pi}{c}=20\log_{10}d+20\log_{10}f-147.55\ \text{dB}\quad(d\text{ in m},\ f\text{ in Hz}). \tag{5}</span> Every doubling of the distance or the frequency adds 6 dB. At 2.4 GHz the loss is 74.0 dB at 50 m and 100.0 dB at 1 km; at 868 MHz, 65.2 dB at 50 m and 105.2 dB at 5 km (module <code>fspl_db</code>; the test checks 100.05 dB at 1 km, 2.4 GHz). A link works if the received power, transmit power minus path loss (with ideal 0 dBi antennas), is above the <strong>receiver sensitivity</strong> <span class="math inline">S</span>. The <strong>link budget</strong> is therefore <span class="math inline">P_{tx}-S</span>, the path loss the link can stand. With <strong>assumed typical</strong> values:</p>
+<table>
+<caption>assumed typical figures (TX current 200, 10, 25, 40, 40 mA at 3.3 V; “simplified” means bits divided by rate, ignoring preambles and protocol overhead, so real airtime and energy are larger). NB-IoT (a cellular technology on licensed spectrum, tens of kb/s, high latency, a cellular modem’s energy cost) is named without numbers.</caption>
+<colgroup>
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 15%" />
+<col style="width: 15%" />
+<col style="width: 15%" />
+<col style="width: 15%" />
+<col style="width: 15%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">technology</th>
+<th style="text-align: left;">band</th>
+<th style="text-align: right;"><span class="math inline">P_{tx}</span> (dBm)</th>
+<th style="text-align: right;">sensitivity (dBm)</th>
+<th style="text-align: right;">nominal rate</th>
+<th style="text-align: right;">link budget (dB)</th>
+<th style="text-align: right;">energy for 100 bytes (mJ, simplified)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">Wi-Fi</td>
+<td style="text-align: left;">2.4 GHz</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;"><span class="math inline">-90</span></td>
+<td style="text-align: right;">6 Mb/s</td>
+<td style="text-align: right;">110</td>
+<td style="text-align: right;">0.088</td>
+</tr>
+<tr>
+<td style="text-align: left;">BLE</td>
+<td style="text-align: left;">2.4 GHz</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;"><span class="math inline">-95</span></td>
+<td style="text-align: right;">1 Mb/s</td>
+<td style="text-align: right;">95</td>
+<td style="text-align: right;">0.026</td>
+</tr>
+<tr>
+<td style="text-align: left;">Zigbee</td>
+<td style="text-align: left;">2.4 GHz</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;"><span class="math inline">-100</span></td>
+<td style="text-align: right;">250 kb/s</td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">0.26</td>
+</tr>
+<tr>
+<td style="text-align: left;">LoRa SF7</td>
+<td style="text-align: left;">868 MHz</td>
+<td style="text-align: right;">14</td>
+<td style="text-align: right;"><span class="math inline">-123</span></td>
+<td style="text-align: right;">5.47 kb/s</td>
+<td style="text-align: right;">137</td>
+<td style="text-align: right;">19</td>
+</tr>
+<tr>
+<td style="text-align: left;">LoRa SF12</td>
+<td style="text-align: left;">868 MHz</td>
+<td style="text-align: right;">14</td>
+<td style="text-align: right;"><span class="math inline">-137</span></td>
+<td style="text-align: right;">0.293 kb/s</td>
+<td style="text-align: right;">151</td>
+<td style="text-align: right;">360</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading the table (Figure 5).</strong> (i) Sensitivity and rate trade against each other: the LoRa budget is 27 to 41 dB larger than Wi-Fi’s because LoRa spends time (a slow bit) to gain signal margin; 41 dB is a factor of 12,000 in power. (ii) That time is energy: sending 100 bytes costs about 360 mJ in the slowest LoRa setting against 0.09 mJ for Wi-Fi, a factor of 4000. <strong>A long-range link is not a cheap link per message</strong>; a LoRa node sends rarely and little. Prediction 3 of Section 2: no. (iii) The free-space range at which the loss equals the budget is only a ceiling (3.1 km for Wi-Fi, 0.56 km for BLE, 0.99 km for Zigbee); indoors, walls, floors and multipath take tens of dB, so real ranges are far shorter, and for LoRa the free-space ceiling (hundreds of kilometres) is meaningless: terrain, the Earth’s curvature and noise decide.</p>
+<figure>
+<img src="../assets/fig/u5/fig03_wireless.png" style="width:95.0%" alt="Left: free-space path loss against distance at 2.4 GHz (grey) and 868 MHz (black), with each technology’s link budget as a dashed line (Wi-Fi 110 dB, BLE 95, Zigbee 100, LoRa SF7 137, LoRa SF12 151); where a loss curve meets a dashed line is that link’s free-space ceiling. Right: simplified energy to send 100 bytes: 0.088 mJ (Wi-Fi), 0.026 (BLE), 0.26 (Zigbee), 19 (LoRa SF7), 360 (LoRa SF12), on a logarithmic axis. All powers, sensitivities, rates and currents are assumed." />
+<figcaption aria-hidden="true">Left: free-space path loss against distance at 2.4 GHz (grey) and 868 MHz (black), with each technology’s link budget as a dashed line (Wi-Fi 110 dB, BLE 95, Zigbee 100, LoRa SF7 137, LoRa SF12 151); where a loss curve meets a dashed line is that link’s free-space ceiling. Right: simplified energy to send 100 bytes: 0.088 mJ (Wi-Fi), 0.026 (BLE), 0.26 (Zigbee), 19 (LoRa SF7), 360 (LoRa SF12), on a logarithmic axis. All powers, sensitivities, rates and currents are assumed.</figcaption>
+</figure>
+<p><em>Airtime is not where the node’s battery goes.</em> In Unit 2 a Wi-Fi report cost 112.6 mA s per cycle, about 372 mJ at 3.3 V, against 0.09 mJ of airtime for 100 bytes: the cost is <strong>association, address assignment, TCP and MQTT handshakes and waiting for answers</strong>, not the bits. The simplified energy per byte in the table is a lower bound that matters most for slow links, where airtime does dominate.</p>
+<h4 id="conformance-do-our-broker-and-client-speak-real-mqtt">3.4.3 Conformance: do our broker and client speak real MQTT?</h4>
+<p>A broker and client that were written together and tested only against each other prove only that they agree with each other. We therefore checked them against two independent implementations in a throwaway virtual environment (<code>pip install paho-mqtt amqtt</code>, versions 2.1.0 and 0.12.1; the script <code>conformance.py</code>, whose output is in <code>conformance_log.txt</code>).</p>
+<p><em>Part A: paho-mqtt, a widely used client, against our broker</em> (10 checks, all passed): CONNECT accepted; SUBACK granted QoS capped at 1 (our design choice, allowed by the specification, which lets a server grant a lower QoS); QoS 0, 1 and 2 publishes complete, including paho’s PUBREC/PUBREL/PUBCOMP exchange; a subscriber receives them at QoS 0, 1 and 1; <code>+</code> matches one level and <code>#</code> several; a retained message reaches a late subscriber with the retain flag and an empty retained payload clears it; a last will is published when the client’s socket vanishes and <em>not</em> after a clean DISCONNECT; and a 1 s keep-alive survives 3 s of silence by ping.</p>
+<p><em>Part B: our client against amqtt, an independent broker</em> (7 checks, all passed): CONNECT accepted; our SUBSCRIBE for QoS 2 granted 2; QoS 0, 1 and 2 publishes acknowledged and all three delivered back to us, including our <strong>inbound QoS 2 handshake</strong>; non-matching topics not delivered; a retained message carries the retain flag; the last will arrives; UNSUBSCRIBE stops delivery.</p>
+<p><em>What the independent broker got wrong.</em> Two observations in Part B were not our errors, and we checked each with paho as a third party. (1) amqtt delivered messages published at QoS 0 and 1 to a QoS 2 subscriber <strong>at QoS 2</strong>, where Section 3.8.4 requires the minimum, 0 and 1. (2) After one client had subscribed with a <em>matching</em> filter and received a retained message, a later client that subscribed to <code>status/#</code> was handed the retained message of <code>greenhouse/zone5/node1/status</code>, which does not match it; this reproduced with paho in the same order, and did not appear when the matching subscriber was absent. Our own broker follows the minimum rule and delivers retained messages only to matching filters (tests and Part A). <strong>Lesson:</strong> an “independent implementation” is evidence, not an oracle: the specification is the oracle, and a disagreement is resolved by reading it.</p>
+<p><em>Limits of our broker (stated in the README).</em> No persistent sessions; no authentication or TLS (Unit 7); no resend of unacknowledged QoS 1 messages to subscribers; subscriptions capped at QoS 1; no <code>$SYS</code> topics; one delivery per overlapping subscription. It is a teaching broker, not a replacement for Mosquitto.</p>
+<h3 id="tier-5-hardest-open-questions">3.5 Tier 5 (hardest): open questions</h3>
+<ol type="1">
+<li><strong>What does TLS cost?</strong> A TLS handshake adds round trips and certificate bytes (kilobytes) to every fresh connection, which for a sleeping node can exceed the reading by a factor of a thousand. How would you keep a session alive across deep sleeps, and what are the security consequences (Unit 7)?</li>
+<li><strong>Can a sleeping node use MQTT at all?</strong> MQTT-SN (a variant over UDP) and gateways exist for this. Design the message flow of a gateway that holds the MQTT connection for fifty sensors, and say what it must do about the last will of a node that is merely asleep.</li>
+<li><strong>Are independent losses realistic?</strong> The QoS formulas assume each packet is lost independently. Wi-Fi losses come in bursts (interference, fading). Would bursty loss make retries more or less useful, and how would you measure it on a real network?</li>
+</ol>
+<h2 id="apply">4. Apply</h2>
+<h3 id="worked-problems">4.1 Worked problems</h3>
+<p><strong>Problem 1 (remaining length).</strong> Encode 321 as an MQTT remaining length, and decode <code>e9 07</code>.</p>
+<p><em>Solution.</em> <span class="math inline">321=2\cdot128+65</span>: the low group is <span class="math inline">65=\mathtt{0x41}</span> with the continuation bit set: <span class="math inline">\mathtt{0xc1}</span>; the next group is 2: so <code>c1 02</code>. Decode <code>e9 07</code>: <span class="math inline">\mathtt{0xe9}=233</span>, continuation set, low 7 bits <span class="math inline">=105</span>; next byte 7: <span class="math inline">105+7\cdot128=1001</span>.</p>
+<p><strong>Problem 2 (PUBLISH size).</strong> Topic <code>farm/a/t</code> (8 characters), payload <code>21.5</code> (4 bytes), QoS 0 and QoS 1. How many bytes?</p>
+<p><em>Solution.</em> Remaining length at QoS 0: <span class="math inline">2+8+4=14</span> (so the fixed header is 2 bytes): total 16 bytes. At QoS 1: <span class="math inline">2+8+2+4=16</span>: total 18 bytes.</p>
+<p><strong>Problem 3 (topic matching).</strong> Which of <code>farm/+/t</code>, <code>farm/#</code>, <code>+/a/#</code>, <code>farm/a</code> match <code>farm/a/t</code>?</p>
+<p><em>Solution.</em> <code>farm/+/t</code>: yes. <code>farm/#</code>: yes. <code>+/a/#</code>: yes (<code>+</code>=farm, <code>a</code>, <code>#</code>=<code>t</code>). <code>farm/a</code>: no (a different number of levels).</p>
+<p><strong>Problem 4 (QoS cost).</strong> At 20% packet loss, what is the expected number of packets for one QoS 1 message with unlimited retries, and the duplicate fraction?</p>
+<p><em>Solution.</em> <span class="math inline">N_1=1/0.8^2+1/0.8=1.5625+1.25=2.8125</span>; duplicates <span class="math inline">p/(1-p)=0.25</span> per message.</p>
+<p><strong>Problem 5 (link budget).</strong> A 2.4 GHz link has 0 dBm transmit power and <span class="math inline">-95</span> dBm sensitivity. What free-space distance does it reach?</p>
+<p><em>Solution.</em> Budget 95 dB: <span class="math inline">20\log_{10}d=95-20\log_{10}(2.4\times10^9)+147.55=95-187.60+147.55=54.95</span>, so <span class="math inline">d=10^{54.95/20}=560</span> m (the module’s <code>max_range_m</code> gives 0.56 km).</p>
+<h3 id="code-and-figures">4.2 Code and figures</h3>
+<pre class="python"><code>import asyncio
+from broker import Broker
+from client import MiniClient
+
+async def demo():
+    b = await Broker().start()                              # our broker on a free local port
+    dash, node = MiniClient(&quot;dash&quot;, 30), MiniClient(&quot;node1&quot;, 30, will=(&quot;greenhouse/zone1/node1/status&quot;, b&quot;offline&quot;, 1, True))
+    await dash.connect(&quot;127.0.0.1&quot;, b.port); await node.connect(&quot;127.0.0.1&quot;, b.port)
+    await dash.subscribe([(&quot;greenhouse/+/soil&quot;, 1)])
+    await node.publish(&quot;greenhouse/zone1/soil&quot;, b&quot;1832&quot;, qos=1)    # waits for PUBACK
+    print(await dash.get())                                  # {&#39;topic&#39;: ..., &#39;payload&#39;: b&#39;1832&#39;, &#39;qos&#39;: 1, ...}
+    node.abort()                                             # vanish without DISCONNECT -&gt; the will is published
+    await dash.disconnect(); await b.stop()
+asyncio.run(demo())</code></pre>
+<p>The module and README are in <code>codes/net/mqtt_mini/</code>. Its ten tests check: the remaining-length boundary values of the specification; packet round trips (CONNECT with will and credentials, PUBLISH with QoS 2 and retain, SUBSCRIBE, ping and disconnect bytes <code>c0 00</code>, <code>d0 00</code>, <code>e0 00</code>); the topic-matching table including the <code>$</code> rule; end-to-end publish/subscribe with wildcards and unsubscribe; QoS 2 exactly-once delivery even if the PUBLISH is repeated; retained messages and their clearing; last will on a dropped connection and none after a clean disconnect; the keep-alive timeout publishing the will; a refused protocol level (CONNACK code 1); and the size, link-budget and QoS formulas against simulation. The conformance script is run separately because it needs the third-party libraries.</p>
+<p><em>What would look different if the theory were wrong?</em> If (2) were wrong, the simulated packet counts would not match the formula to 1% (they match to 0.01 to 0.03 packets). If (4) were wrong, the bounded-retry simulation would not give 0.973 and 0.844 at 30% loss; it does. If our broker were not MQTT, paho would fail in Part A; it passed all ten checks.</p>
+<h2 id="analyze">5. Analyze</h2>
+<p><strong>Limits.</strong> At <span class="math inline">p=0</span> the three QoS levels cost 1, 2 and 4 packets; as <span class="math inline">p\to1</span> the retry-forever cost diverges as <span class="math inline">1/(1-p)^2</span> (12 packets at <span class="math inline">p=0.5</span> for QoS 2, 17.5 at <span class="math inline">p=0.6</span>). With bounded retries, delivery tends to <span class="math inline">1-p^3</span> for QoS 1 and falls to zero as <span class="math inline">p\to1</span>. Free-space loss grows without bound (6 dB per doubling) while real losses exceed it.</p>
+<p><strong>Dominance.</strong> For one reading from a sleeping node, connection set-up and tear-down (the TCP handshake, CONNECT, CONNACK, DISCONNECT and the close: 425 of the 540 bytes) dominate the bytes; the topic name (21 of the 31 PUBLISH bytes) dominates the message; and in Unit 2’s energy budget the connection setup, not the airtime, dominates the charge.</p>
+<p><strong>Order-of-magnitude estimate.</strong> Per-message overhead: a 4-byte reading in a 20-to-40-byte message in a 70-to-500-byte exchange: the useful fraction is 1 to 6 percent, whatever the protocol. This is why payloads are batched when latency allows (Unit 6).</p>
+<p><strong>Sensitivity.</strong> QoS 2 delivery with three attempts changes from 0.992 at <span class="math inline">p=0.1</span> to 0.844 at <span class="math inline">p=0.3</span> and 0.506 at <span class="math inline">p=0.5</span>, while QoS 1 holds 0.999, 0.973, 0.875: the extra handshake is a liability when the link is bad and retries are few.</p>
+<p><strong>Failure modes.</strong> (1) <em>A false “offline”</em>: a will fired by a node that merely slept. (2) <em>Duplicates at QoS 1</em>: a command (“open the valve”) executed twice if it is not idempotent. (3) <em>A topic with a wildcard in a PUBLISH</em> (invalid; our broker closes the connection). (4) <em>A retained message that lies</em>: a retained <code>online</code> outliving a dead node unless a will clears it. (5) <em>Over-trusting an independent implementation</em> (Section 3.4.3). (6) <em>Keep-alive longer than the network’s idle timeout</em>: a router drops the TCP connection silently.</p>
+<p><strong>Items used from the pedagogy checklist:</strong> limits, dominance, estimate, sensitivity, failure modes, convergence (simulation against formula), invariants (QoS 2 never duplicates; round trips of every packet type), provenance (spec sections read; CoAP bytes not), and a priori versus a posteriori (the formulas predicted the simulations).</p>
+<h2 id="evaluate">6. Evaluate</h2>
+<p><strong>HTTP versus MQTT versus CoAP.</strong> HTTP is universal, easy to test with a browser and a firewall will pass it, at 119 bytes of application overhead and a TCP handshake per request; use it when a device talks to an existing web service rarely. MQTT is the right choice for many devices and many consumers, event distribution and last-value semantics, when the connection can stay open. CoAP suits a very constrained device and a request/response style over UDP, at the cost of fewer tools and less widespread infrastructure. <strong>None dominates</strong>: the table of Section 3.4.1 shows the choice depends on whether the node sleeps.</p>
+<p><strong>QoS choice.</strong> Use QoS 0 for data that is replaced within seconds (the rover’s pose at 10 Hz: an old pose is worthless, so a retry is wasteful); QoS 1 for readings and commands that must arrive, with idempotent handling of duplicates; QoS 2 almost never on a constrained device (Section 3.3.4).</p>
+<p><strong>Wi-Fi versus LoRa versus BLE.</strong> Wi-Fi: high rate, high power, existing infrastructure, good for the rover and mains-powered gateways. BLE: low power, short range, phones as gateways. Zigbee: low power with mesh routing. LoRa: very long range and very low data rate, for a few bytes per hour; cellular NB-IoT where there is no gateway and a subscription is acceptable. The greenhouse is 30 m across and has mains power at the gateway: Wi-Fi from node to gateway is adequate, and LoRa would be a poor fit (energy per message 4000 times higher).</p>
+<p><strong>Context.</strong> MQTT was designed in the late 1990s for monitoring oil pipelines over expensive satellite links (from memory, not verified here), hence its small headers and its last-will and retained-message features, and version 3.1.1 became an OASIS standard in 2014 (the specification we read); the layering of Section 3.1 is the Internet’s own. <strong>When NOT to use MQTT:</strong> a request that needs a direct, immediate answer (use HTTP or CoAP); a device that sleeps and cannot hold a connection (use a gateway or CoAP); a very large payload (use HTTP or object storage).</p>
+<p><strong>Honesty about this Unit’s numbers.</strong> The protocol logic, packet layouts, matching rules, the 17 conformance checks, the QoS formulas and their simulations are real and were run. The CoAP layout is unverified. The radio powers, sensitivities, rates, currents, the 40 ms round-trip time and the loss rates are assumed. The wire-size model omits TLS, TCP options, link-layer framing and DNS. The Wi-Fi association and address assignment, which dominate the real connect time, are not modelled.</p>
+<h2 id="create">7. Create</h2>
+<div class="create" title="What you can build from this">
+<ol type="1">
+<li><strong>Add persistent sessions</strong> to the broker (store QoS 1 messages for a disconnected, non-clean client, and resend on reconnection) and test it with paho.</li>
+<li><strong>A wildcard fuzz test.</strong> Generate random topics and filters, compare <code>topic_matches</code> with the specification’s rules written as a regular expression, and report any difference.</li>
+<li><strong>Measure your own network.</strong> Using the client, send 1000 QoS 0 messages to a local broker over Wi-Fi and count the loss; estimate <span class="math inline">p</span> and use (2).</li>
+<li><strong>A topic design.</strong> Design the topic tree for 5 zones with 4 sensors each, a rover and an alert service, and list which filters each consumer uses.</li>
+<li><strong>Could become a package module:</strong> <code>iotrobotics.net</code> with <code>mqtt_proto</code>, <code>Broker</code>, <code>MiniClient</code>, <code>netcalc</code>, reused by the dashboard (Unit 6) and the rover (Units 9 to 12).</li>
+</ol>
+</div>
+<p><strong>Running project, Layer 4: the communication design.</strong> Topics (short, hierarchical): readings <code>greenhouse/&lt;zone&gt;/soil</code> and <code>greenhouse/&lt;zone&gt;/temp</code>; status <code>greenhouse/&lt;zone&gt;/&lt;node&gt;/status</code> (retained; will <code>offline</code> for the always-on rover only); rover <code>greenhouse/rover/pose</code> (QoS 0, 10 Hz) and <code>greenhouse/rover/cmd</code> (QoS 1, commands written to be idempotent). The soil node publishes readings at <strong>QoS 1</strong> because requirement R14 (99% delivery) cannot be met at QoS 0 for any loss above 1%, and QoS 1 with three attempts delivers <span class="math inline">1-p^3</span> (99.9% at <span class="math inline">p=0.1</span>). Updated requirements:</p>
+<table>
+<caption>running-project requirements updated by Unit 5. The Wi-Fi connect time still has to be measured on a board; the radio numbers are assumed.</caption>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">id</th>
+<th style="text-align: left;">requirement</th>
+<th style="text-align: left;">status after Unit 5</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">R1</td>
+<td style="text-align: left;">readings reported every 60 s</td>
+<td style="text-align: left;">met by a QoS 1 PUBLISH every cycle: 31 bytes, 540 bytes on the wire with a fresh connection, about 778 kB per day per node</td>
+</tr>
+<tr>
+<td style="text-align: left;">R14</td>
+<td style="text-align: left;">at least 99% of readings delivered</td>
+<td style="text-align: left;">needs QoS 1 and at most 3 attempts: 99.9% at <span class="math inline">p=0.1</span>, 97.3% at <span class="math inline">p=0.3</span> (<span class="math inline">1-p^3</span>); QoS 0 gives only 90% at <span class="math inline">p=0.1</span></td>
+</tr>
+<tr>
+<td style="text-align: left;">R17 (new)</td>
+<td style="text-align: left;">one reading takes at most 3 round trips of 40 ms to publish</td>
+<td style="text-align: left;">120 ms for MQTT on a fresh connection (3 RTT); a gateway holding the connection reduces it to 1 RTT</td>
+</tr>
+<tr>
+<td style="text-align: left;">R18 (new)</td>
+<td style="text-align: left;">the dashboard shows the last value at once and marks a silent node</td>
+<td style="text-align: left;">retained last value for status topics; a node silent for three reporting periods is “stale” (Unit 6); no will for sleeping nodes</td>
+</tr>
+<tr>
+<td style="text-align: left;">R2</td>
+<td style="text-align: left;">telemetry latency to the dashboard under 2 s</td>
+<td style="text-align: left;">open: radio and broker latency are small (tens of ms) but Wi-Fi association (Unit 4’s 0.5 s) is assumed</td>
+</tr>
+</tbody>
+</table>
+<h2 id="visualization-lesson">8. Visualization lesson</h2>
+<table>
+<caption>the chart types of this Unit. Ladder: <em>remember</em> the names; <em>understand</em> what each shows; <em>apply</em> the call; <em>analyse</em> how it misleads; <em>evaluate</em> when a table is better (the wire-bytes table of Section 3.4.1: the reader wants the exact bytes and the per-day volume); <em>create</em> a new one (a message sequence chart for the QoS 2 handshake).</caption>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Chart type</th>
+<th style="text-align: left;">Best for</th>
+<th style="text-align: left;">How it misleads</th>
+<th style="text-align: left;">matplotlib call</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">layered stack diagram</td>
+<td style="text-align: left;">structure that nests (protocol layers)</td>
+<td style="text-align: left;">the boxes’ sizes imply sizes of headers; they are not to scale</td>
+<td style="text-align: left;"><code>FancyBboxPatch</code>, <code>ax.text</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">topology / flow diagram</td>
+<td style="text-align: left;">who talks to whom (publish/subscribe)</td>
+<td style="text-align: left;">arrows suggest a direct connection; here everything goes via the broker</td>
+<td style="text-align: left;"><code>FancyArrowPatch</code>, <code>ax.text</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">byte-field map (hex dump with labelled fields)</td>
+<td style="text-align: left;">the layout of one packet</td>
+<td style="text-align: left;">colours group fields; the sizes of the boxes are equal per byte, not per meaning</td>
+<td style="text-align: left;"><code>plt.Rectangle</code>, <code>ax.text</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">grouped bars of costs</td>
+<td style="text-align: left;">comparing alternatives on one quantity</td>
+<td style="text-align: left;">bars from zero are fair, but different panels use different scales (message vs exchange)</td>
+<td style="text-align: left;"><code>ax.bar(x, v)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">threshold lines on a curve (link budget)</td>
+<td style="text-align: left;">where a curve meets a limit</td>
+<td style="text-align: left;">the crossing is a ceiling, not a prediction of real range</td>
+<td style="text-align: left;"><code>ax.axhline(y, ls="--")</code>, <code>ax.semilogx(...)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">simulation markers over a formula line</td>
+<td style="text-align: left;">showing that theory and simulation agree</td>
+<td style="text-align: left;">agreement of a model with its own simulation proves the algebra, not the model</td>
+<td style="text-align: left;"><code>ax.plot(x, f)</code>, <code>ax.plot(xs, ys, "o")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">log-scale bar</td>
+<td style="text-align: left;">quantities spanning orders of magnitude (energy per message)</td>
+<td style="text-align: left;">the visual gap between bars is a ratio, not a difference</td>
+<td style="text-align: left;"><code>ax.set_yscale("log")</code>, <code>ax.bar(...)</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading Figure 3 as a chart.</strong> A byte map makes one fact visible that prose hides: 21 of the 31 bytes are the topic name. Figure 4’s two panels use different vertical scales on purpose (one message against a whole exchange); comparing across the panels would mislead.</p>
+<h2 id="problem-set">9. Problem set</h2>
+<div class="exercise" title="Graded exercises">
+<ol type="1">
+<li>(easy) How many bytes is an MQTT PUBLISH at QoS 0 with topic <code>a/b</code> and payload <code>42</code>?</li>
+<li>(medium) A node sends a 6-byte reading every 30 s over a fresh MQTT QoS 1 connection with client id <code>n7</code> and topic <code>farm/z2/soil</code>. Use the module’s <code>wire_mqtt_fresh</code> to find the bytes per day.</li>
+<li>(medium-hard) Derive the expected packets for QoS 1 when the sender gives up after <span class="math inline">M=3</span> attempts (not retrying forever) as a function of <span class="math inline">p</span>, and evaluate it at <span class="math inline">p=0.3</span>. Compare with 3.47 for unlimited retries.</li>
+<li>(hard) Show that for QoS 2 with at most 3 attempts per step the delivery probability is <span class="math inline">(1-(1-(1-p)^2)^3)(1-p^3)</span> and find the loss rate at which QoS 2 delivers exactly 99% (solve numerically). How does it compare with QoS 1?</li>
+<li>(hardest) A fleet of 50 nodes each publishes once a minute over fresh connections. Compare the broker’s incoming bytes per day for a design with a gateway that keeps one MQTT connection and batches 50 readings per message (a 50-reading JSON batch is about 1 kB) against 50 separate connections. State your assumptions.</li>
+</ol>
+</div>
+<h2 id="retrieval-practice-and-recap">10. Retrieval practice and recap</h2>
+<p><strong>Answers to the Section 2 predictions.</strong></p>
+<ol type="1">
+<li>Over a hundred (119 bytes for HTTP in our example); about thirty for MQTT (29 bytes at QoS 0, 31 at QoS 1).</li>
+<li>About 3.5 (3.47).</li>
+<li>No: a slow long-range link spends far more energy per message (about 360 mJ for 100 bytes at the slowest LoRa setting against 0.09 mJ for Wi-Fi, in our simplified model).</li>
+</ol>
+<p><strong>Answers to the Section 2 recall quiz.</strong></p>
+<ol type="1">
+<li>Application, transport, network (IP), link/radio.</li>
+<li><code>+</code> matches exactly one topic level; <code>#</code> matches all remaining levels (including the parent level).</li>
+<li>To give a new subscriber the last known value of a topic immediately.</li>
+<li>When the connection closes without a DISCONNECT packet (crash, power loss, network failure, or keep-alive expiry after 1.5 times the interval).</li>
+<li>It spends almost all its time asleep with the radio off, so the TCP connection cannot be held and each report must reconnect.</li>
+</ol>
+<p><strong>Explain it to a friend.</strong></p>
+<ul>
+<li>Why does MQTT need a broker in the middle, and what does that buy?</li>
+<li>Why can QoS 2 deliver fewer messages than QoS 1 when a sensor gives up after three tries?</li>
+<li>Why is a link that reaches kilometres not a link that is cheap to use?</li>
+</ul>
+<p><strong>Re-derive by hand tomorrow, without looking:</strong> (a) the variable-length encoding of 16,384; (b) the expected packets for QoS 1, <span class="math inline">1/(1-p)^2+1/(1-p)</span>; (c) the free-space path loss <span class="math inline">20\log_{10}d+20\log_{10}f-147.55</span> dB.</p>
+<h2 id="where-next">11. Where next</h2>
+<ul>
+<li><strong>Unit 6</strong> looks at what the broker’s subscribers do with the data: payload formats (JSON against compact binary), time series, a dashboard with alerts, edge versus cloud processing, and anomaly detection, using this Unit’s broker as the transport.</li>
+<li>Terms named here but not taught: TLS (Unit 7), JSON and CBOR (Unit 6), MQTT-SN and mesh routing (named), DNS and DHCP (named). They are registered in CURRICULUM.md.</li>
+<li><strong>Open threads:</strong> the CoAP byte layout is unverified against RFC 7252; the radio, round-trip and loss numbers are assumed; the real Wi-Fi connect time is unmeasured; the independent broker amqtt deviates from the specification in two ways (kept as a finding, not a defect of this course); our broker has no persistent sessions.</li>
+</ul>
+<p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u4.html">&larr; Microcontrollers</a><a class="btn" href="u6.html">Data, cloud, edge &rarr;</a></p></article></div></main>
+<footer><div class="wrap">Internet of Things and Robotics crash course · Code is MIT-licensed; PDFs are for study use. Companion to the <a href="../../index.html">Generative AI and LLMs course</a>.</div></footer>
+<script>
+document.getElementById('theme').onclick=function(){var d=document.documentElement,c=d.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'),n=c==='dark'?'light':'dark';d.dataset.theme=n;try{localStorage.setItem('theme',n)}catch(e){}};
+</script>
+<script src="../../assets/vendor/katex/katex.min.js"></script><script>document.querySelectorAll(".math").forEach(function(n){var d=n.classList.contains("display");var t=n.textContent.replace(/^\\[\(\[]|\\[\)\]]$/g,"");try{katex.render(t,n,{displayMode:d,throwOnError:false})}catch(e){}});</script></body></html>
