@@ -1,15 +1,454 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Unit 8: Robot Kinematics · IoT and Robotics</title>
+<title>Unit 8: Robot Kinematics: Frames, Arms, Wheels and the Drift of Dead Reckoning · IoT and Robotics</title>
 <meta name="description" content="From volts and sensors to MQTT, security, kinematics, control, localisation and navigation, built around one running project: a Smart Greenhouse Rover. Twelve units with a PDF and runnable code each, a 14-lab track and an assessment bank. Built for a B.Tech student; simulation-first, no hardware needed.">
 <link rel="stylesheet" href="../../assets/css/style.css"><link rel="stylesheet" href="../assets/css/iot.css">
 <script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 <link rel="stylesheet" href="../../assets/vendor/katex/katex.min.css"></head><body>
 <header class="site-head"><div class="wrap">
 <a class="brand" href="../index.html">IoT <span>&amp;</span> Robotics<span class="long"> crash course</span></a>
-<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
+<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../playground/index.html">Playground</a><a href="../labs.html">Labs</a><a href="../assessment.html">Assessment</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
 </div></header>
-<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 8</strong><a href="#topics">Syllabus topics</a></aside><article class="doc"><p><span class="chip">Unit 8</span> <span class="chip soon">in preparation</span></p><h1>Robot Kinematics</h1><p class="lede">Frames, rotations, the two-link arm, the Jacobian, differential drive and odometry drift.</p><p class="box warn">Notes and code for this unit are being written. The topics below are the syllabus.</p><h2 id="topics">Syllabus topics</h2><ul><li>Degrees of freedom; frames and transforms</li><li>Forward and inverse kinematics of a 2-link arm</li><li>Workspace, Jacobian, singularities</li><li>Differential-drive kinematics and odometry</li></ul><p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u7.html">&larr; Security</a><a class="btn" href="u9.html">Control &rarr;</a></p></article></div></main>
+<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 8</strong><a href="#session-map">Session map</a><a href="#terms-the-term-tree">1. Terms: the term tree</a><a href="#remember">2. Remember</a><a href="#understand-the-derivation">3. Understand: the derivation</a><a href="#apply">4. Apply</a><a href="#analyze">5. Analyze</a><a href="#evaluate">6. Evaluate</a><a href="#create">7. Create</a><a href="#visualization-lesson">8. Visualization lesson</a><a href="#problem-set">9. Problem set</a><a href="#retrieval-practice-and-recap">10. Retrieval practice and recap</a><a href="#where-next">11. Where next</a></aside><article class="doc"><p><span class="chip">Unit 8</span> <span class="chip ">ready</span></p><h1>Robot Kinematics: Frames, Arms, Wheels and the Drift of Dead Reckoning</h1><p class="lede">Frames, rotations, the two-link arm, the Jacobian, differential drive and odometry drift.</p><div class="dl"><a class="btn primary" href="../downloads/u8/u8-notes.pdf" download>PDF notes<small>859 KB</small></a><a class="btn" href="../downloads/u8/u8-notes.docx" download>Word (.docx)<small>625 KB</small></a><a class="btn" href="../downloads/u8/u8-code.zip" download>All code (.zip)<small>26 KB</small></a></div><h2 id="session-map">Session map</h2>
+<div class="keyidea" title="Outcome of this session">
+<p>After this session you can:</p>
+<ol type="1">
+<li>describe a robot’s pose with a rotation matrix and a homogeneous transform, chain transforms (sensor to rover to world) and invert them;</li>
+<li>solve the forward and inverse kinematics of a 2-link arm in closed form, find its workspace and both postures for a target, and explain why the Jacobian’s determinant <span class="math inline">\ell_1\ell_2\sin q_2</span> marks its singularities;</li>
+<li>derive the differential-drive model, its feasible speed region and the exact arc update used for odometry;</li>
+<li>predict how dead-reckoning error grows with distance for a wheel-radius mismatch (as <span class="math inline">s^2</span>) and for random slip (as <span class="math inline">s^{3/2}</span>), check both by simulation, and calibrate the systematic part;</li>
+<li>use the shared rover simulator of this course (mass, wheels, encoder, track width) as the base for Units 9 to 11.</li>
+</ol>
+</div>
+<ul>
+<li><strong>Prerequisites:</strong> Unit 2 (the motor’s no-load speed), Unit 3 (the quadrature encoder and its 0.157 mm per count), basic trigonometry and <span class="math inline">2\times2</span> matrices. Calculus for one derivative.</li>
+<li><strong>Difficulty ladder used:</strong> easy → medium → medium-hard → hard (Sections 3.1 to 3.4); the hardest tier is posed as open questions in Section 3.5.</li>
+<li><strong>Deliverables:</strong> this document (.tex, .pdf, .docx), 6 figures, the module <code>codes/robotics/kinematics_np/</code> (SE(2) transforms, the 2-link arm, the differential-drive model, the shared <code>Rover</code> simulator with encoders, wheel errors, slip and odometry, and the drift formulas; 8 tests), a sympy check of the Jacobian (<code>analysis_sympy_log.txt</code>) and the logs of every printed number.</li>
+<li><strong>Source anchors:</strong> this Unit derives its results from the stated geometry and quotes no paper or book. (The planned references, Lynch and Park, <em>Modern Robotics</em>, and Siegwart et al., <em>Introduction to Autonomous Mobile Robots</em>, were not consulted for any number here; the conventions below are the standard ones and every formula is checked symbolically with sympy or numerically against a simulation.) <strong>The nozzle-arm link lengths (0.30 m and 0.20 m), the rover’s track width (0.16 m), the wheel-radius error (0.5%), the slip variance and the sensor mounting are assumed round numbers</strong>; the mass, wheel radius, encoder and motor speed are those of Units 2 and 3.</li>
+</ul>
+<h2 id="terms-the-term-tree">1. Terms: the term tree</h2>
+<table>
+<colgroup>
+<col style="width: 22%" />
+<col style="width: 14%" />
+<col style="width: 37%" />
+<col style="width: 13%" />
+<col style="width: 10%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Term</th>
+<th style="text-align: center;">Symbol</th>
+<th style="text-align: left;">One-line meaning</th>
+<th style="text-align: center;">Where it appears</th>
+<th style="text-align: center;">New / known</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">degrees of freedom (DOF)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the number of independent numbers that fix a mechanism’s configuration</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">kinematics (forward, inverse)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">motion without forces: from joint values to the tool position, and back</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">coordinate frame</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">an origin and axes in which positions are written</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">pose</td>
+<td style="text-align: center;"><span class="math inline">(x,y,\theta)</span></td>
+<td style="text-align: left;">position and heading of a frame</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">rotation matrix</td>
+<td style="text-align: center;"><span class="math inline">R(\theta)</span></td>
+<td style="text-align: left;">the matrix that turns a vector by <span class="math inline">\theta</span></td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">homogeneous transform</td>
+<td style="text-align: center;"><span class="math inline">T</span></td>
+<td style="text-align: left;">a <span class="math inline">3\times3</span> matrix holding a rotation and a translation, so that frames chain by multiplication</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">link and joint</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a rigid part and the rotating connection between parts</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">workspace</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">all points the tool can reach</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">Jacobian</td>
+<td style="text-align: center;"><span class="math inline">J</span></td>
+<td style="text-align: left;">the matrix that maps joint rates to tool velocity</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">singularity and manipulability</td>
+<td style="text-align: center;"><span class="math inline">\lvert\det J\rvert</span></td>
+<td style="text-align: left;">a posture where <span class="math inline">J</span> loses rank; a measure of how far from one</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">differential drive</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">two independently driven wheels on one axle; steering by speed difference</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">track width</td>
+<td style="text-align: center;"><span class="math inline">L</span></td>
+<td style="text-align: left;">distance between the wheels’ contact points</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">non-holonomic constraint</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a restriction on velocity (no sideways motion) that does not restrict reachable poses</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">odometry and dead reckoning</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">estimating pose by adding up wheel motion from encoder counts</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">systematic and random odometry error</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">repeatable (a wrong radius) and unpredictable (slip) errors</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">wheel slip</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">wheel rotation that does not become ground travel</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+</tbody>
+</table>
+<p>Terms <em>used but not taught here</em>: 3-D rotations and quaternions (named only), dynamics of the arm (named only), the UMBmark calibration test (named only), Kalman filtering (Unit 10).</p>
+<h2 id="remember">2. Remember</h2>
+<div class="definition" title="Frames, poses and degrees of freedom">
+<p>A <strong>coordinate frame</strong> is an origin and a set of axes. The <strong>pose</strong> of a planar frame is its position <span class="math inline">(x,y)</span> and its heading <span class="math inline">\theta</span> (counter-clockwise from the <span class="math inline">x</span> axis), written in a parent frame. The <strong>degrees of freedom (DOF)</strong> of a mechanism are the independent numbers that fix its configuration: a rigid body in the plane has 3 (its pose); a 2-link arm has 2 (its two joint angles); a robot’s <em>control inputs</em> may be fewer than its DOF.</p>
+</div>
+<div class="definition" title="Conventions of this course">
+<p>World frame: <span class="math inline">x</span> east, <span class="math inline">y</span> north. Body frame of the rover: <span class="math inline">x</span> forward, <span class="math inline">y</span> left, origin midway between the wheels. Angles in radians, counter-clockwise positive. A transform <span class="math inline">T_{ab}</span> takes coordinates in frame <span class="math inline">b</span> to coordinates in frame <span class="math inline">a</span>.</p>
+</div>
+<div class="definition" title="The shared rover">
+<p>Units 8 to 11 use one rover model (<code>RoverParams</code>): mass 1.5 kg, wheel radius 33 mm, <strong>track width 160 mm</strong> (new here, assumed), encoder 1320 counts per wheel revolution (0.157 mm per count, Unit 3), motor no-load speed 20.94 rad/s (200 rpm at 6 V, Unit 2), so a <strong>wheel speed limit of <span class="math inline">20.94\times0.033=0.691</span> m/s</strong>, and a cruise speed of 0.5 m/s. It also carries a small <strong>nozzle arm</strong> with two links of 0.30 m and 0.20 m (assumed) for watering pots.</p>
+</div>
+<p><strong>Memory hooks.</strong></p>
+<ul>
+<li><em>A pose is three numbers; a transform is a pose you can multiply.</em></li>
+<li><em>Read a chain right to left:</em> <span class="math inline">T_{ws}=T_{wr}\,T_{rs}</span> means “a point in the sensor frame, moved into the rover frame, then into the world frame”.</li>
+<li><em>An arm near full stretch is a bridge near its limit:</em> tiny tool motions need huge joint motions.</li>
+<li><em>Two wheels: the average moves you, the difference turns you.</em></li>
+<li><em>Odometry is a sum, and a sum of small mistakes grows.</em> A wrong wheel radius grows as distance squared.</li>
+</ul>
+<p><strong>Before you read on: three predictions</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>The right wheel of the rover is 0.5% larger than the left (a manufacturing tolerance), but the software assumes they are equal. The rover is told to drive straight for 20 m. About how far from the straight line does it end: 2 cm, 20 cm or metres?</li>
+<li>A 2-link arm has links of 0.30 m and 0.20 m. The tool must move at 0.1 m/s radially. By roughly what factor are the joints’ speeds higher at 0.499 m from the base than at 0.30 m: 1.2, 13 or 100?</li>
+<li>The software assumes a track width 2% smaller than the true one. The rover is commanded to spin one full turn (360 degrees). By about how much does it miss: 1, 7 or 30 degrees?</li>
+</ol>
+<p><strong>Recall quiz</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>How many numbers describe the pose of a rover on a plane?</li>
+<li>Write the inverse of a transform with rotation <span class="math inline">R</span> and translation <span class="math inline">t</span>.</li>
+<li>For which joint angle of a 2-link arm is the arm singular, and what does that mean physically?</li>
+<li>How are the wheel speeds related to the body’s speed <span class="math inline">v</span> and turn rate <span class="math inline">\omega</span>?</li>
+<li>Why can a rover with a wrong wheel radius not be corrected by averaging more encoder readings?</li>
+</ol>
+<h2 id="understand-the-derivation">3. Understand: the derivation</h2>
+<h3 id="tier-1-easy-intuition-and-a-picture">3.1 Tier 1 (easy): intuition and a picture</h3>
+<p>A robot needs to answer two questions: <em>where is everything</em>, and <em>how do I move there</em>. The first needs frames: the soil node’s position in the greenhouse, the rover’s pose in the greenhouse, the ultrasonic sensor’s position on the rover, and the obstacle’s position in the sensor’s own view. A sensor reports in its own frame (“0.80 m straight ahead”); the planner works in the world frame; the transforms between them are the whole job. Figure 1 shows a rover at pose <span class="math inline">(2.0,1.0)</span> m with heading 30 degrees, a sensor mounted 0.10 m ahead of the rover’s centre, and an obstacle 0.80 m in front of the sensor. In the rover frame the obstacle is at <span class="math inline">(0.90,0)</span>; in the world frame it is at <span class="math inline">(2.779,1.450)</span>.</p>
+<figure>
+<img src="../assets/fig/u8/fig01_frames.png" style="width:70.0%" alt="A rover at pose (2.0 m, 1.0 m, 30 degrees) with a sensor frame 0.10 m ahead of its centre and an obstacle detected 0.80 m ahead of the sensor. The same obstacle is (0.80, 0) in the sensor frame, (0.90, 0) in the rover frame and (2.779, 1.450) in the world frame: each is the previous one multiplied by a transform." />
+<figcaption aria-hidden="true">A rover at pose (2.0 m, 1.0 m, 30 degrees) with a sensor frame 0.10 m ahead of its centre and an obstacle detected 0.80 m ahead of the sensor. The same obstacle is (0.80, 0) in the sensor frame, (0.90, 0) in the rover frame and (2.779, 1.450) in the world frame: each is the previous one multiplied by a transform.</figcaption>
+</figure>
+<p>The rover has three DOF of pose, <span class="math inline">(x,y,\theta)</span>, but only two control inputs: forward speed <span class="math inline">v</span> and turn rate <span class="math inline">\omega</span>. It cannot slide sideways. This kind of restriction on <em>velocity</em> that does not limit where the robot can eventually get to (it can reach any pose by turning and driving) is called <strong>non-holonomic</strong>; it is why parallel parking needs a manoeuvre. The arm is the opposite case: two joints, two numbers, and the tool can be placed anywhere in its workspace directly.</p>
+<h3 id="tier-2-medium-frames-rotations-and-transforms">3.2 Tier 2 (medium): frames, rotations and transforms</h3>
+<p>A vector <span class="math inline">p=(p_x,p_y)</span> written in a frame that is rotated by <span class="math inline">\theta</span> relative to its parent has parent-frame coordinates <span class="math inline">R(\theta)\,p</span> with <span class="math display"> R(\theta)=\begin{pmatrix}\cos\theta&amp;-\sin\theta\\ \sin\theta&amp;\cos\theta\end{pmatrix}. \tag{1}</span> To see why, take <span class="math inline">p=(1,0)</span> along the child’s <span class="math inline">x</span> axis: it points at angle <span class="math inline">\theta</span> in the parent, so its parent coordinates are <span class="math inline">(\cos\theta,\sin\theta)</span>, the first column of <span class="math inline">R</span>; likewise <span class="math inline">(0,1)</span> becomes <span class="math inline">(-\sin\theta,\cos\theta)</span>, the second column. <span class="math inline">R</span> is <em>orthogonal</em> (<span class="math inline">R^\top R=I</span>: lengths and angles are preserved) with <span class="math inline">\det R=1</span>, so its inverse is its transpose, <span class="math inline">R(\theta)^{-1}=R(-\theta)</span> (the module’s test checks both).</p>
+<p>A frame with origin at <span class="math inline">t=(x,y)</span> in the parent maps a point by rotating and then translating, <span class="math inline">p&#39;=R\,p+t</span>. Writing points as <span class="math inline">(p_x,p_y,1)^\top</span> makes this one matrix product, <span class="math display"> T=\begin{pmatrix}R&amp;t\\ 0\;0&amp;1\end{pmatrix},\qquad \begin{pmatrix}p&#39;\\1\end{pmatrix}=T\begin{pmatrix}p\\1\end{pmatrix}. \tag{2}</span> This is a <strong>homogeneous transform</strong>. Two transforms compose by matrix multiplication, <span class="math inline">T_{ac}=T_{ab}T_{bc}</span> (take a point from <span class="math inline">c</span> to <span class="math inline">b</span>, then from <span class="math inline">b</span> to <span class="math inline">a</span>), and the inverse follows from solving <span class="math inline">p&#39;=Rp+t</span> for <span class="math inline">p</span>: <span class="math display"> p=R^\top(p&#39;-t)\quad\Longrightarrow\quad T^{-1}=\begin{pmatrix}R^\top&amp;-R^\top t\\ 0\;0&amp;1\end{pmatrix}. \tag{3}</span> Check with Figure 1: the sensor is <span class="math inline">T_{rs}=\mathrm{se2}(0.10,0,0)</span> and the rover <span class="math inline">T_{wr}=\mathrm{se2}(2.0,1.0,30^\circ)</span>. The obstacle <span class="math inline">(0.80,0)</span> in the sensor frame is <span class="math inline">T_{rs}(0.80,0)=(0.90,0)</span> in the rover frame and <span class="math inline">T_{wr}(0.90,0)=(2+0.90\cos30^\circ,\ 1+0.90\sin30^\circ)=(2.779,1.450)</span> in the world frame; applying <span class="math inline">T_{wr}^{-1}</span> returns <span class="math inline">(0.90,0)</span> (script <code>fig01_frames.py</code>).</p>
+<h3 id="tier-3-medium-hard-the-2-link-arm">3.3 Tier 3 (medium-hard): the 2-link arm</h3>
+<h4 id="forward-kinematics">3.3.1 Forward kinematics</h4>
+<p>A <strong>link</strong> is a rigid bar; a <strong>joint</strong> is a rotating connection. A planar arm with two joints has angles <span class="math inline">q_1</span> (link 1 from the <span class="math inline">x</span> axis) and <span class="math inline">q_2</span> (link 2 relative to link 1) and link lengths <span class="math inline">\ell_1,\ell_2</span>. Link 1’s tip (the elbow) is at <span class="math inline">\ell_1(\cos q_1,\sin q_1)</span> and link 2 adds <span class="math inline">\ell_2</span> at angle <span class="math inline">q_1+q_2</span>, so the tool is at <span class="math display"> x=\ell_1\cos q_1+\ell_2\cos(q_1+q_2),\qquad y=\ell_1\sin q_1+\ell_2\sin(q_1+q_2). \tag{4}</span> The <strong>workspace</strong> is the set of reachable points. The distance of the tool from the base satisfies, by squaring and adding the two lines of (4) and using <span class="math inline">\cos^2+\sin^2=1</span> and the cosine of a difference, <span class="math display"> r^2=x^2+y^2=\ell_1^2+\ell_2^2+2\ell_1\ell_2\cos q_2 \tag{5}</span> (sympy confirms this identity, <code>analysis_sympy_log.txt</code>), which varies between <span class="math inline">(\ell_1-\ell_2)^2</span> at <span class="math inline">q_2=\pi</span> and <span class="math inline">(\ell_1+\ell_2)^2</span> at <span class="math inline">q_2=0</span>. The workspace is therefore an annulus, <span class="math inline">|\ell_1-\ell_2|\le r\le\ell_1+\ell_2</span>: for our arm, <span class="math inline">0.10\le r\le0.50</span> m, an area of <span class="math inline">0.754</span> m<span class="math inline">^2</span> for all base angles.</p>
+<h4 id="inverse-kinematics">3.3.2 Inverse kinematics</h4>
+<p>Given a target <span class="math inline">(x,y)</span> we want <span class="math inline">(q_1,q_2)</span>. Solving (5) for <span class="math inline">q_2</span> gives <span class="math display"> \cos q_2=\frac{x^2+y^2-\ell_1^2-\ell_2^2}{2\ell_1\ell_2},\qquad q_2=\pm\arccos(\cdot), \tag{6}</span> which exists only if the right-hand side lies in <span class="math inline">[-1,1]</span>, exactly the annulus condition. Then <span class="math inline">q_1</span> is the direction to the target minus the angle that link 2 makes at the elbow: <span class="math display"> q_1=\operatorname{atan2}(y,x)-\operatorname{atan2}\!\big(\ell_2\sin q_2,\ \ell_1+\ell_2\cos q_2\big). \tag{7}</span> The <span class="math inline">\pm</span> in (6) gives <strong>two postures</strong> for every interior point (the two mirror images about the line from the base to the target; books call one “elbow up” and the other “elbow down” and disagree on which is which, so we say <span class="math inline">q_2&gt;0</span> and <span class="math inline">q_2&lt;0</span>). For the target <span class="math inline">(0.35,0.25)</span> m (<span class="math inline">r=0.430</span> m): <span class="math inline">q_2=\pm62.72^\circ</span> with <span class="math inline">q_1=11.13^\circ</span> for <span class="math inline">q_2&gt;0</span> and <span class="math inline">q_1=59.95^\circ</span> for <span class="math inline">q_2&lt;0</span>; forward kinematics of each returns <span class="math inline">(0.35,0.25)</span> (Figure 2). The module tests 500 random reachable targets with both postures: forward kinematics of the solution reproduces the target to <span class="math inline">10^{-12}</span> m, and points at <span class="math inline">r=0.51</span> m or <span class="math inline">0.05</span> m return no solution.</p>
+<figure>
+<img src="../assets/fig/u8/fig02_arm.png" style="width:62.0%" alt="The nozzle arm (links 0.30 m and 0.20 m) and its annular workspace (shaded; radii 0.10 m and 0.50 m). Two postures reach the same target (0.35, 0.25): q_1=11.1^\circ, q_2=62.7^\circ (blue) and q_1=59.9^\circ, q_2=-62.7^\circ (orange)." />
+<figcaption aria-hidden="true">The nozzle arm (links 0.30 m and 0.20 m) and its annular workspace (shaded; radii 0.10 m and 0.50 m). Two postures reach the same target (0.35, 0.25): <span class="math inline">q_1=11.1^\circ</span>, <span class="math inline">q_2=62.7^\circ</span> (blue) and <span class="math inline">q_1=59.9^\circ</span>, <span class="math inline">q_2=-62.7^\circ</span> (orange).</figcaption>
+</figure>
+<h4 id="the-jacobian-and-singularities">3.3.3 The Jacobian and singularities</h4>
+<p>Moving the tool at a given velocity needs joint rates. Differentiating (4) with respect to time gives <span class="math inline">\dot x=-(\ell_1s_1+\ell_2s_{12})\dot q_1-\ell_2s_{12}\dot q_2</span> and <span class="math inline">\dot y=(\ell_1c_1+\ell_2c_{12})\dot q_1+\ell_2c_{12}\dot q_2</span> with <span class="math inline">s_1=\sin q_1</span>, <span class="math inline">s_{12}=\sin(q_1+q_2)</span> and so on, i.e. <span class="math inline">\dot{\mathbf p}=J(q)\,\dot q</span> with the <strong>Jacobian</strong> <span class="math display"> J=\begin{pmatrix}-\ell_1s_1-\ell_2s_{12}&amp;-\ell_2s_{12}\\ \ell_1c_1+\ell_2c_{12}&amp;\ell_2c_{12}\end{pmatrix},\qquad \det J=\ell_1\ell_2\sin q_2. \tag{8}</span> (The determinant is verified symbolically by sympy, and <span class="math inline">J</span> against central finite differences at 50 random postures to <span class="math inline">10^{-8}</span>.) To find the joint rates for a wanted tool velocity solve <span class="math inline">J\dot q=\dot{\mathbf p}</span>; the inverse contains the factor <span class="math inline">1/\det J=1/(\ell_1\ell_2\sin q_2)</span> (sympy: every entry of <span class="math inline">J^{-1}</span> has <span class="math inline">\sin q_2</span> in its denominator). <strong>At <span class="math inline">q_2=0</span> (arm fully stretched) or <span class="math inline">q_2=\pm\pi</span> (folded) the determinant is zero: the arm is singular.</strong> Physically, at full stretch the tool can only move perpendicular to the arm; to move it <em>along</em> the arm (outward or inward) would need infinite joint speed. Near a singularity the needed rates blow up like <span class="math inline">1/\sin q_2</span>.</p>
+<p><em>Numbers for the nozzle arm</em> (Figure 3). <span class="math inline">|\det J|</span> peaks at <span class="math inline">\ell_1\ell_2=600</span> cm<span class="math inline">^2</span> for <span class="math inline">q_2=\pm90^\circ</span> and is only 52.3 cm<span class="math inline">^2</span> at <span class="math inline">q_2=5^\circ</span>. To move the tool radially at 0.1 m/s the joint-rate norm needed is 0.659 rad/s at <span class="math inline">r=0.15</span> m, <strong>0.543 rad/s at <span class="math inline">r=0.30</span> m</strong> (nearly the minimum), 1.006 at 0.45 m, 2.21 at 0.49 m and <strong>6.96 rad/s at 0.499 m</strong>, a factor of <span class="math inline">6.96/0.543=12.8</span> higher than at 0.30 m: prediction 2 of Section 2: about 13. The <em>usable</em> workspace, where 0.1 m/s needs at most 1.0 rad/s, is <span class="math inline">0.126\le r\le0.449</span> m: roughly the outer 13% and the inner 7% of the annulus’s width are poor places to aim for.</p>
+<figure>
+<img src="../assets/fig/u8/fig03_jacobian.png" style="width:95.0%" alt="Left: |\det J|=\ell_1\ell_2|\sin q_2| against the elbow angle: zero at q_2=0 (stretched) and \pm180^\circ (folded), at most 600 cm^2 at \pm90^\circ. Right: joint-rate norm needed to move the tool radially at 0.1 m/s against its distance from the base (log axis): about 0.54 rad/s at 0.30 m, 6.96 rad/s at 0.499 m, rising without limit at the two edges of the workspace." />
+<figcaption aria-hidden="true">Left: <span class="math inline">|\det J|=\ell_1\ell_2|\sin q_2|</span> against the elbow angle: zero at <span class="math inline">q_2=0</span> (stretched) and <span class="math inline">\pm180^\circ</span> (folded), at most 600 cm<span class="math inline">^2</span> at <span class="math inline">\pm90^\circ</span>. Right: joint-rate norm needed to move the tool radially at 0.1 m/s against its distance from the base (log axis): about 0.54 rad/s at 0.30 m, 6.96 rad/s at 0.499 m, rising without limit at the two edges of the workspace.</figcaption>
+</figure>
+<h3 id="tier-4-hard-the-differential-drive-rover-and-its-odometry">3.4 Tier 4 (hard): the differential-drive rover and its odometry</h3>
+<h4 id="the-model">3.4.1 The model</h4>
+<p>Let the left and right wheels travel at ground speeds <span class="math inline">v_L,v_R</span>. The body’s forward speed is the average and its turn rate the difference over the track width: <span class="math display"> v=\frac{v_R+v_L}{2},\qquad \omega=\frac{v_R-v_L}{L},\qquad\Longleftrightarrow\qquad v_L=v-\frac{L}{2}\omega,\quad v_R=v+\frac{L}{2}\omega. \tag{9}</span> (The turn rate is the difference of the two ends of a rigid axle, one moving <span class="math inline">v_R</span> and the other <span class="math inline">v_L</span>, divided by the distance between them.) The pose changes as <span class="math inline">\dot x=v\cos\theta</span>, <span class="math inline">\dot y=v\sin\theta</span>, <span class="math inline">\dot\theta=\omega</span>. With <strong>wheel angular speeds</strong> <span class="math inline">\omega_{L,R}</span> and radius <span class="math inline">r</span>, <span class="math inline">v_{L,R}=r\omega_{L,R}</span>.</p>
+<p><em>Which <span class="math inline">(v,\omega)</span> are possible?</em> Each wheel speed is limited by the motor to <span class="math inline">v_w=0.691</span> m/s (Unit 2: no-load 20.94 rad/s times 33 mm). The conditions <span class="math inline">|v\mp\frac L2\omega|\le v_w</span> together say <span class="math display"> |v|+\frac L2|\omega|\le v_w, \tag{10}</span> a diamond in the <span class="math inline">(v,\omega)</span> plane (Figure 4, left). Its corners give the extremes: <span class="math inline">\omega_{\max}=2v_w/L=8.64</span> rad/s (495 degrees per second) when spinning in place (<span class="math inline">v=0</span>), and <span class="math inline">v_{\max}=0.691</span> m/s straight. <strong>At the cruise speed of 0.5 m/s only <span class="math inline">|\omega|\le2(v_w-0.5)/L=2.39</span> rad/s remains</strong>, so the tightest turn at cruise speed has radius <span class="math inline">v/\omega=0.209</span> m; slowing to <span class="math inline">v=0.2</span> m/s allows <span class="math inline">\omega=2</span> rad/s and a radius of 0.10 m (Figure 4, right).</p>
+<figure>
+<img src="../assets/fig/u8/fig04_diffdrive.png" style="width:95.0%" alt="Left: the feasible (v,\omega) region (blue diamond) from the motors’ no-load speed (v_w=0.691 m/s, L=0.16 m): spinning in place up to 8.64 rad/s; at the 0.5 m/s cruise speed only |\omega|\le2.39 rad/s. Right: simulated paths over 4 s for four commands: straight at 0.5 m/s; a circle of radius 0.40 m (v=0.4, \omega=1); a circle of radius 0.10 m (v=0.2, \omega=2); and a spin in place." />
+<figcaption aria-hidden="true">Left: the feasible <span class="math inline">(v,\omega)</span> region (blue diamond) from the motors’ no-load speed (<span class="math inline">v_w=0.691</span> m/s, <span class="math inline">L=0.16</span> m): spinning in place up to 8.64 rad/s; at the 0.5 m/s cruise speed only <span class="math inline">|\omega|\le2.39</span> rad/s. Right: simulated paths over 4 s for four commands: straight at 0.5 m/s; a circle of radius 0.40 m (<span class="math inline">v=0.4</span>, <span class="math inline">\omega=1</span>); a circle of radius 0.10 m (<span class="math inline">v=0.2</span>, <span class="math inline">\omega=2</span>); and a spin in place.</figcaption>
+</figure>
+<h4 id="integrating-the-motion-exactly">3.4.2 Integrating the motion exactly</h4>
+<p>Over a short interval with constant wheel travels <span class="math inline">\Delta s_L,\Delta s_R</span> the rover follows a circular arc of radius <span class="math inline">R_c=\Delta s/\Delta\theta</span> with <span class="math inline">\Delta s=\frac12(\Delta s_R+\Delta s_L)</span> and <span class="math inline">\Delta\theta=(\Delta s_R-\Delta s_L)/L</span>; integrating <span class="math inline">\dot x=v\cos\theta</span>, <span class="math inline">\dot y=v\sin\theta</span> along the arc gives the exact update <span class="math display"> x&#39;=x+R_c\big(\sin(\theta+\Delta\theta)-\sin\theta\big),\quad y&#39;=y-R_c\big(\cos(\theta+\Delta\theta)-\cos\theta\big),\quad \theta&#39;=\theta+\Delta\theta, \tag{11}</span> with the straight-line limit <span class="math inline">x&#39;=x+\Delta s\cos\theta</span>, <span class="math inline">y&#39;=y+\Delta s\sin\theta</span> when <span class="math inline">\Delta\theta\to0</span> (the module’s <code>arc_pose</code>). The simple alternative, <strong>Euler integration</strong>, moves along the <em>old</em> heading, <span class="math inline">x&#39;=x+v\cos\theta\,\Delta t</span>, and turns afterwards. Its error is first order in the step: for a 1 m radius circle at 0.5 m/s, the end-point error after a quarter lap is 0.372 m for steps of 1.05 s, 0.185 m for 0.52 s, 0.093 m for 0.26 s, 0.044 m for 0.126 s and 0.0044 m for 0.0126 s: <strong>halving the step halves the error</strong>. The exact arc has an error of <span class="math inline">10^{-15}</span> m (rounding only). (A full lap with whole steps closes exactly even for Euler: it traces a regular polygon, whose circumradius is <span class="math inline">R\,(\omega\Delta t/2)/\sin(\omega\Delta t/2)=1.0115R</span> at 12 steps per lap; closure is therefore the wrong test, and an earlier version of our figure made that mistake before we looked at the numbers.)</p>
+<figure>
+<img src="../assets/fig/u8/fig06_integration.png" style="width:95.0%" alt="Left: end-point error after a quarter lap of a 1 m circle for Euler integration (red, proportional to the step) and the exact arc update (blue, rounding error only). Right: heading error after a commanded 360 degree spin, when the software’s track width is wrong by 0 to 10%: -3.5^\circ for 1%, -7.0^\circ for 2%, -17.1^\circ for 5%, -32.7^\circ for 10%." />
+<figcaption aria-hidden="true">Left: end-point error after a quarter lap of a 1 m circle for Euler integration (red, proportional to the step) and the exact arc update (blue, rounding error only). Right: heading error after a commanded 360 degree spin, when the software’s track width is wrong by 0 to 10%: <span class="math inline">-3.5^\circ</span> for 1%, <span class="math inline">-7.0^\circ</span> for 2%, <span class="math inline">-17.1^\circ</span> for 5%, <span class="math inline">-32.7^\circ</span> for 10%.</figcaption>
+</figure>
+<h4 id="odometry-from-encoder-counts">3.4.3 Odometry from encoder counts</h4>
+<p>The encoders count wheel rotation. A count increment <span class="math inline">\Delta N</span> means <span class="math inline">\Delta N\cdot d</span> metres of wheel travel with <span class="math inline">d=2\pi r/\mathrm{CPR}=0.1571</span> mm per count (Unit 3). The rover feeds <span class="math inline">\Delta s_L=d\,\Delta N_L</span> and <span class="math inline">\Delta s_R=d\,\Delta N_R</span> into (11) to update its <strong>odometry pose</strong>, <strong>dead reckoning</strong>: estimating pose by adding up motion. The resolution is fine: one count of one wheel changes the heading by <span class="math inline">d/L=0.98</span> mrad (0.056 degrees) and the position by 0.157 mm. With ideal wheels the module’s <code>Rover</code> keeps odometry and true pose within 2 mm and 0.01 rad after 15 s of driving (test). The trouble is not the counting; it is that counts are turned into distance with <em>assumed</em> numbers (radius, track) and that wheels slip.</p>
+<h4 id="how-odometry-drifts-a-wrong-wheel-radius">3.4.4 How odometry drifts: a wrong wheel radius</h4>
+<p>Suppose the right wheel’s true radius is <span class="math inline">(1+\varepsilon)</span> times the assumed one, and the rover is commanded to drive straight, so both encoders count the same. The odometry believes both wheels travelled <span class="math inline">s</span>; truly the left wheel travelled <span class="math inline">s</span> and the right <span class="math inline">(1+\varepsilon)s</span>. The true heading changes by <span class="math inline">\Delta\theta=(s_R-s_L)/L=\varepsilon s/L</span>: <strong>the heading error grows linearly with distance, and a small radius error is divided by the small track width</strong>. The path is a circular arc of radius <span class="math inline">R_c=\frac L2\frac{s_R+s_L}{s_R-s_L}=\frac{L(2+\varepsilon)}{2\varepsilon}\approx L/\varepsilon</span>, whose end point is <span class="math inline">(R_c\sin\Delta\theta,\ R_c(1-\cos\Delta\theta))</span>; for small angles the sideways error is <span class="math display"> y\approx\frac{\varepsilon s^2}{2L}. \tag{12}</span> For <span class="math inline">\varepsilon=0.5\%</span> and <span class="math inline">L=0.16</span> m, over <span class="math inline">s=20</span> m: <span class="math inline">\Delta\theta=0.625</span> rad (35.8 degrees), <span class="math inline">R_c=32.08</span> m, the true end point is <span class="math inline">(18.77,\ 6.064)</span> m while the odometry says <span class="math inline">(20,0)</span>: <strong>a position error of 6.19 m, 30.9% of the distance</strong> (prediction 1 of Section 2: metres). The simulator agrees with the arc to the printed digits. The error grows as <span class="math inline">s^2</span>: 0.016 m at 1 m, 0.39 m at 5 m (7.8%), 1.56 m at 10 m (15.6%), 6.19 m at 20 m. (The 0.5% is an assumed tolerance of a cheap wheel.)</p>
+<p><em>Calibration.</em> Equation (12) can be inverted: drive straight for a known distance, measure the sideways deviation <span class="math inline">y</span>, and estimate <span class="math inline">\varepsilon=2Ly/s^2</span>. From the simulated 5 m run, <span class="math inline">y=0.3908</span> m gives <span class="math inline">\varepsilon=0.00500</span>, exact. The estimate’s resolution is <span class="math inline">\delta\varepsilon=2L\,\delta y/s^2</span>: with a 1 cm measuring error and a 5 m run, <span class="math inline">1.3\times10^{-4}</span> (0.013%), so a tape measure suffices to bring the radius mismatch below the levels that matter (next).</p>
+<h4 id="random-drift-and-the-track-width">3.4.5 Random drift, and the track width</h4>
+<p>Wheels also slip randomly. Model the travel of each wheel over a step as its nominal value plus an independent error of variance <span class="math inline">q\,|\Delta s|</span> (variance proportional to distance, <span class="math inline">q</span> in m<span class="math inline">^2</span> per metre; assumed <span class="math inline">4\times10^{-6}</span>, about 2 mm standard deviation per metre). Per step the heading changes by <span class="math inline">(\delta s_R-\delta s_L)/L</span>, of variance <span class="math inline">2q\,\Delta s/L^2</span>; summed over independent steps the <strong>heading variance grows linearly</strong>, <span class="math inline">\sigma_\theta^2(s)=2qs/L^2</span>. The sideways position is the integral of the heading, <span class="math inline">y(s)=\int_0^s\theta(u)\,du</span>, so <span class="math display"> \mathrm{Var}\,y(s)=\int_0^s\!\!\int_0^{s}\frac{2q\min(u,u&#39;)}{L^2}\,du\,du&#39;=\frac{2q\,s^3}{3L^2},\qquad\sigma_y=\sqrt{\frac{2q\,s^3}{3L^2}}. \tag{13}</span> The random error grows as <span class="math inline">s^{3/2}</span>, more slowly than the systematic one (<span class="math inline">s^2</span>) but without a calibration cure. With the assumed <span class="math inline">q</span> and <span class="math inline">L=0.16</span> m, <span class="math inline">\sigma_y=0.913</span> m at 20 m (4.6%); the simulation (60 runs per distance, root-mean-square total position error) gave 0.010, 0.026, 0.100, 0.293, 0.538 and 0.831 m at 1, 2, 5, 10, 15 and 20 m, against the formula’s 0.010, 0.029, 0.114, 0.323, 0.593 and 0.913 m: the simulated values are 9 to 12% below the formula for 5 m and more, which is consistent with the 9% sampling error of a standard deviation from 60 runs, though a small systematic offset is possible and was not investigated.</p>
+<figure>
+<img src="../assets/fig/u8/fig05_drift.png" style="width:95.0%" alt="Left: the true path (red) and the odometry path (blue) of a 20 m straight patrol with a 0.5% right-wheel radius error: the rover believes it is at (20, 0) m but is at (18.77, 6.06) m, 6.19 m away. Right: position error against distance (log-log): the systematic error (red) grows as s^2, reaching 6.19 m at 20 m (30.9%); the random-slip error (blue, simulated; grey, formula) as s^{3/2}, 0.83 m at 20 m (4.2%). The dotted line is 10% of 20 m." />
+<figcaption aria-hidden="true">Left: the true path (red) and the odometry path (blue) of a 20 m straight patrol with a 0.5% right-wheel radius error: the rover believes it is at (20, 0) m but is at (18.77, 6.06) m, 6.19 m away. Right: position error against distance (log-log): the systematic error (red) grows as <span class="math inline">s^2</span>, reaching 6.19 m at 20 m (30.9%); the random-slip error (blue, simulated; grey, formula) as <span class="math inline">s^{3/2}</span>, 0.83 m at 20 m (4.2%). The dotted line is 10% of 20 m.</figcaption>
+</figure>
+<p><em>The track width</em> matters differently: it does not affect straight lines at all but scales every rotation. If the true track is <span class="math inline">(1+e)</span> times the assumed one, a commanded spin that the odometry counts as 360 degrees is truly <span class="math inline">360^\circ/(1+e)</span>, an error of <span class="math inline">360^\circ(1/(1+e)-1)</span>: <span class="math inline">-3.56^\circ</span> for <span class="math inline">e=1\%</span>, <span class="math inline">-7.06^\circ</span> for 2% (prediction 3 of Section 2: about 7), <span class="math inline">-17.14^\circ</span> for 5% and <span class="math inline">-32.73^\circ</span> for 10%. The simulator gave <span class="math inline">-3.52</span>, <span class="math inline">-7.01</span>, <span class="math inline">-17.11</span> and <span class="math inline">-32.71</span> (a 0.34-degree overshoot of the stopping rule explains the small difference). <strong>Wheel radius governs the straights, track width the turns:</strong> calibrate both.</p>
+<h3 id="tier-5-hardest-open-questions">3.5 Tier 5 (hardest): open questions</h3>
+<ol type="1">
+<li><strong>Can a non-holonomic rover reach every pose, and at what cost?</strong> Show that with only <span class="math inline">v</span> and <span class="math inline">\omega</span> a rover can reach any <span class="math inline">(x,y,\theta)</span>, and describe a sequence of motions that moves it 10 cm sideways. Why is this a problem for a planner (Unit 11)?</li>
+<li><strong>Which error model is right?</strong> Our slip model has variance proportional to distance. Real slip depends on the floor, the speed and the acceleration, and is partly <em>systematic</em> (a floor that drags one side). Design an experiment with a tape measure and a protractor that separates the three effects (radius, track width, random slip).</li>
+<li><strong>Beyond the plane.</strong> A rover on a slope or a drone needs 3-D rotations. Why can three angles (Euler angles) fail near a singularity, and how does the arm’s Jacobian singularity compare with that failure? (Quaternions are named, not taught.)</li>
+</ol>
+<h2 id="apply">4. Apply</h2>
+<h3 id="worked-problems">4.1 Worked problems</h3>
+<p><strong>Problem 1 (transforms).</strong> The rover is at pose <span class="math inline">(1.0,2.0)</span> m with heading 90 degrees. A watering pot is at <span class="math inline">(0.5,0.2)</span> m in the rover frame. Where is it in the world frame?</p>
+<p><em>Solution.</em> <span class="math inline">R(90^\circ)=\begin{pmatrix}0&amp;-1\\1&amp;0\end{pmatrix}</span>, so <span class="math inline">R(0.5,0.2)^\top=(-0.2,0.5)</span>; adding <span class="math inline">t=(1,2)</span> gives <span class="math inline">(0.8,2.5)</span> m.</p>
+<p><strong>Problem 2 (inverse kinematics).</strong> For links 0.30 m and 0.20 m, find both postures for the target <span class="math inline">(0.10,0.40)</span> m.</p>
+<p><em>Solution.</em> <span class="math inline">r^2=0.17</span>; <span class="math inline">\cos q_2=(0.17-0.09-0.04)/(2\times0.06)=0.3333</span>, <span class="math inline">q_2=\pm70.53^\circ</span>. For <span class="math inline">q_2=+70.53^\circ</span>: <span class="math inline">q_1=\operatorname{atan2}(0.4,0.1)-\operatorname{atan2}(0.2\sin70.53^\circ,\ 0.3+0.2\times0.3333)=75.96^\circ-27.21^\circ=48.75^\circ</span>; for <span class="math inline">q_2=-70.53^\circ</span>: <span class="math inline">q_1=103.18^\circ</span>. Both give <span class="math inline">(0.10,0.40)</span> by forward kinematics.</p>
+<p><strong>Problem 3 (wheel speeds).</strong> Find the wheel speeds (m/s and rad/s) for <span class="math inline">v=0.3</span> m/s and <span class="math inline">\omega=1.5</span> rad/s with <span class="math inline">L=0.16</span> m, and say whether the motors can deliver them.</p>
+<p><em>Solution.</em> <span class="math inline">v_L=0.3-0.12=0.18</span> m/s and <span class="math inline">v_R=0.42</span> m/s, i.e. 5.455 and 12.727 rad/s (divide by 0.033 m). Both are below the 0.691 m/s limit: feasible (<span class="math inline">0.3+0.08\times1.5=0.42\le0.691</span>).</p>
+<p><strong>Problem 4 (drift).</strong> A wheel-radius mismatch of 0.2% over 10 m of straight driving: heading error and position error?</p>
+<p><em>Solution.</em> <span class="math inline">\Delta\theta=\varepsilon s/L=0.002\times10/0.16=0.125</span> rad <span class="math inline">=7.2^\circ</span> (exact arc: 7.16 degrees); position error <span class="math inline">\varepsilon s^2/(2L)=0.002\times100/0.32=0.625</span> m (exact: 0.625 m).</p>
+<p><strong>Problem 5 (resolution).</strong> One wheel turns by 2000 counts while the other stands still. How far does that wheel travel, and by how much does the heading change?</p>
+<p><em>Solution.</em> <span class="math inline">2000\times0.1571</span> mm <span class="math inline">=314.2</span> mm; the heading changes by <span class="math inline">0.3142/0.16=1.963</span> rad <span class="math inline">=112.5^\circ</span> (pivoting about the stationary wheel).</p>
+<h3 id="code-and-figures">4.2 Code and figures</h3>
+<pre class="python"><code>import kinematics_np as K
+
+T = K.se2(2.0, 1.0, 0.5236) @ K.se2(0.10, 0.0, 0.0)               # world &lt;- rover &lt;- sensor
+print(K.transform_point(T, (0.80, 0.0)))                           # [2.779 1.45]
+q = K.ik_2link(0.35, 0.25, 0.30, 0.20, &quot;up&quot;)                       # (q1, q2) in radians, or None
+print(K.fk_2link(q, 0.30, 0.20), K.jacobian_2link(q, 0.30, 0.20))
+r = K.Rover(eps_r=0.005)                                           # right wheel 0.5% large (true), software unaware
+r.drive(v=0.5, w=0.0, t=40.0)                                      # 20 m &quot;straight&quot;
+print(r.pose, r.odom, r.position_error())                          # true (18.77, 6.06), odometry (20, 0), error 6.19 m</code></pre>
+<p>The module and its README are in <code>codes/robotics/kinematics_np/</code>. Its eight tests check: SE(2) properties (orthogonality, inverse, chaining); 500 random IK/FK round trips for both postures and the unreachable cases; the Jacobian against finite differences and its determinant; the wheel-speed conversions and the feasible region; the exact arc against Euler on a circle; ideal odometry against truth to within the counting resolution; the systematic drift against the closed form (to 1%); and the random drift against its formula (to 20%).</p>
+<p><em>What would look different if the theory were wrong?</em> If (8) were wrong, the finite-difference check and sympy would disagree; they agree to <span class="math inline">10^{-8}</span> and symbolically. If (12) were wrong the simulated path would miss the arc; the end points agree to the printed digits. If (13) were wrong the simulated errors would not scale as <span class="math inline">s^{3/2}</span>; they do, within the sampling error of the 60 runs.</p>
+<h2 id="analyze">5. Analyze</h2>
+<p><strong>Limits.</strong> As <span class="math inline">\varepsilon\to0</span> the drift vanishes, linearly in <span class="math inline">\varepsilon</span> and quadratically in distance; as <span class="math inline">L\to\infty</span> the same <span class="math inline">\varepsilon</span> matters less (a wider rover turns less for the same wheel difference). As <span class="math inline">q_2\to0</span> the arm’s rates diverge as <span class="math inline">1/\sin q_2</span>; as <span class="math inline">\Delta t\to0</span> Euler converges to the arc.</p>
+<p><strong>Dominance.</strong> Setting <span class="math inline">\varepsilon s^2/(2L)=\sqrt{2q/3}\,s^{3/2}/L</span> gives the distance where the two errors are equal, <span class="math inline">\sqrt s=2\sqrt{2q/3}/\varepsilon=0.65</span>, i.e. <span class="math inline">s=0.43</span> m for <span class="math inline">\varepsilon=0.5\%</span>: the random part is the larger only below about 40 cm. At 20 m the systematic radius error (6.19 m) is 7.4 times the random one (0.83 m). Calibrating the systematic part is therefore the first thing to do.</p>
+<p><strong>Order-of-magnitude estimate.</strong> Heading error <span class="math inline">\approx\varepsilon s/L=0.005\times20/0.16\approx0.6</span> rad: more than half a radian after 20 m from a half-percent tolerance, the number to remember about differential-drive odometry.</p>
+<p><strong>Sensitivity.</strong> Drift scales with <span class="math inline">\varepsilon/L</span>: halving <span class="math inline">L</span> doubles it. The R5 budget: with random drift 0.83 m at 20 m and a limit of 10% (2.0 m), the systematic part may contribute <span class="math inline">\sqrt{2.0^2-0.83^2}=1.82</span> m, i.e. <span class="math inline">\varepsilon\le0.147\%</span>.</p>
+<p><strong>Failure modes.</strong> (1) <em>Uncalibrated wheels</em>: metres of error. (2) <em>Wrong track width</em>: wrong turns. (3) <em>Slip</em> (wet floor, wheelspin at start): the encoders do not see it. (4) <em>Euler integration with large steps</em>. (5) <em>A singular arm posture</em>: huge joint rates (and motor limits). (6) <em>Mixing frames</em> (sensor, body, world): the most common bug.</p>
+<p><strong>Items used from the pedagogy checklist:</strong> limits, dominance, estimate, sensitivity, failure modes, invariants (orthogonality, FK(IK)=target), convergence (Euler against the arc), residual (the 9 to 12% gap in the random-slip check, reported not hidden), and a priori versus a posteriori (the drift was predicted before it was simulated).</p>
+<h2 id="evaluate">6. Evaluate</h2>
+<p><strong>Differential drive versus alternatives.</strong> Two driven wheels plus a caster is the cheapest and turns in place, at the cost of the non-holonomic restriction and slip when turning; a car-like (Ackermann) base has a minimum turning radius and is better at speed; an omnidirectional base moves sideways but slips more and costs more; a tracked base turns by skidding (large, unmodelled slip). For a greenhouse with rows 0.5 m wide, in-place turning matters, so differential drive is the right choice.</p>
+<p><strong>Closed-form versus numerical IK.</strong> The closed form for two links is exact and instant; for arms with more joints there is no general closed form and one uses numerical methods built on the Jacobian (named, not taught). The Jacobian also serves collision-avoiding and velocity control.</p>
+<p><strong>Odometry alone.</strong> It is free (the encoders are there anyway), accurate for short distances and smooth (no jumps), and useless over long distances unless calibrated and corrected by something that sees the world: Unit 10.</p>
+<p><strong>Context.</strong> The mathematics of frames and rotations is classical mechanics and linear algebra; the dead-reckoning problem is as old as ship navigation. <strong>When NOT to use these models:</strong> at high speed or on soft ground (slip and dynamics dominate and the no-slip model of (9) fails), for a heavy arm moving fast (dynamics, inertia and gravity matter: named, not covered), and in 3-D without 3-D rotations.</p>
+<p><strong>Honesty about this Unit’s numbers.</strong> The formulas are exact consequences of the stated geometry and were checked symbolically (sympy) or against simulations of the same geometry; they say nothing about a real chassis. The link lengths, track width, wheel-radius error and slip variance are assumed. The random-drift check agrees with its formula only within the sampling error of 60 runs, with a possible small offset of 9 to 12% that was not investigated further. The textbooks named in the plan were not consulted.</p>
+<h2 id="create">7. Create</h2>
+<div class="create" title="What you can build from this">
+<ol type="1">
+<li><strong>Calibrate a simulated rover.</strong> Give <code>Rover</code> an unknown <span class="math inline">\varepsilon</span> and a track error, run the straight and spin experiments, estimate both with <span class="math inline">\varepsilon=2Ly/s^2</span> and the spin formula, and show the position error at 20 m before and after.</li>
+<li><strong>A reachable-points map.</strong> For the nozzle arm, colour the usable workspace (joint rate under 1 rad/s for 0.1 m/s) and mark where a pot at a given position can be watered from the rover’s parking spot.</li>
+<li><strong>Parallel parking.</strong> Using only <span class="math inline">(v,\omega)</span> commands, find a sequence that moves the rover 10 cm sideways and measure the path length it needs.</li>
+<li><strong>Slip on a slope.</strong> Add a systematic slip to one wheel only and see how it differs from a radius error in the heading drift and in the odometry.</li>
+<li><strong>Could become a package module:</strong> <code>iotrobotics.kinematics</code> with the transforms, the arm, the diff-drive model and the <code>Rover</code> base class that Units 9 to 11 extend.</li>
+</ol>
+</div>
+<p><strong>Running project, Layer 7: the motion model.</strong> The rover now has a model (<code>RoverParams</code>, <code>Rover</code>), a wheel-speed region, an exact odometry update and a drift budget; its nozzle arm has closed-form kinematics and a usable workspace. Updated requirements:</p>
+<table>
+<caption>running-project requirements updated by Unit 8. R5 is closed in Unit 10 (a filter that uses a map or a gyroscope to correct the drift); R3 in Unit 11.</caption>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">id</th>
+<th style="text-align: left;">requirement</th>
+<th style="text-align: left;">status after Unit 8</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">R5</td>
+<td style="text-align: left;">position error after a 20 m patrol under 10%</td>
+<td style="text-align: left;"><strong>fails uncalibrated</strong>: a 0.5% radius error gives 6.19 m (30.9%); random slip alone gives 0.83 m (4.2%, simulated); odometry alone meets R5 only if the radius mismatch is calibrated to at most 0.147%; calibration by one 5 m run and a tape measure resolves 0.013%</td>
+</tr>
+<tr>
+<td style="text-align: left;">R27 (new)</td>
+<td style="text-align: left;">the rover turns correctly in place</td>
+<td style="text-align: left;">needs the track width within 1% (3.6 degrees error per full spin); measure it with a spin test</td>
+</tr>
+<tr>
+<td style="text-align: left;">R28 (new)</td>
+<td style="text-align: left;">the nozzle arm reaches pots at 0.15 to 0.45 m</td>
+<td style="text-align: left;">usable workspace <span class="math inline">0.126\le r\le0.449</span> m (joint rate <span class="math inline">\le1</span> rad/s for 0.1 m/s); both postures exist for every interior point</td>
+</tr>
+<tr>
+<td style="text-align: left;">R29 (new)</td>
+<td style="text-align: left;">turning radius at cruise speed</td>
+<td style="text-align: left;">0.209 m at 0.5 m/s (wheel speed limit 0.691 m/s); 0.10 m at 0.2 m/s; rows must be wider than 0.42 m for a U-turn at cruise speed</td>
+</tr>
+<tr>
+<td style="text-align: left;">R3, S1</td>
+<td style="text-align: left;">collision stop (Unit 1), safe state (Unit 7)</td>
+<td style="text-align: left;">unchanged; the rover model gives the shared parameters used to test them in Units 9 and 11</td>
+</tr>
+</tbody>
+</table>
+<h2 id="visualization-lesson">8. Visualization lesson</h2>
+<table>
+<caption>the chart types of this Unit. Ladder: <em>remember</em> the names; <em>understand</em> what each shows; <em>apply</em> the call; <em>analyse</em> how it misleads; <em>evaluate</em> when a table is better (the drift table of Section 3.4.4: the reader wants exact metres); <em>create</em> a new one (an arm reachability heat map).</caption>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Chart type</th>
+<th style="text-align: left;">Best for</th>
+<th style="text-align: left;">How it misleads</th>
+<th style="text-align: left;">matplotlib call</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">frame diagram (axes as arrows)</td>
+<td style="text-align: left;">the relation between coordinate frames</td>
+<td style="text-align: left;">arrow lengths are arbitrary; do not read distances from them</td>
+<td style="text-align: left;"><code>ax.annotate("", xy, xytext, arrowprops=...)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">workspace plot (shaded annulus with postures)</td>
+<td style="text-align: left;">what a mechanism can reach</td>
+<td style="text-align: left;">the shading ignores joint limits, collisions and singular neighbourhoods</td>
+<td style="text-align: left;"><code>ax.fill(...)</code>, <code>ax.plot(...)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">curve with singular points marked</td>
+<td style="text-align: left;">how a quantity vanishes (determinant against joint angle)</td>
+<td style="text-align: left;">a smooth curve hides that the inverse blows up at the zeros</td>
+<td style="text-align: left;"><code>ax.plot(q2, det)</code>, <code>ax.axvline(0, ls=":")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">semi-log curve with limit lines</td>
+<td style="text-align: left;">a quantity that diverges (joint rates)</td>
+<td style="text-align: left;">the log axis shrinks the blow-up; print the numbers</td>
+<td style="text-align: left;"><code>ax.semilogy(r, rates)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">feasible-region polygon</td>
+<td style="text-align: left;">the set of allowed commands</td>
+<td style="text-align: left;">the polygon is a limit, not a recommendation: near its edge the margin is zero</td>
+<td style="text-align: left;"><code>ax.fill(x, y, alpha=0.3)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">equal-aspect trajectory plot</td>
+<td style="text-align: left;">paths in the plane</td>
+<td style="text-align: left;">unequal axis scales bend circles into ellipses</td>
+<td style="text-align: left;"><code>ax.set(aspect="equal")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">log-log error against distance with slope reference</td>
+<td style="text-align: left;">the growth law of an error (<span class="math inline">s^2</span>, <span class="math inline">s^{1.5}</span>)</td>
+<td style="text-align: left;">a straight line fits many laws over one decade; compare with the formula</td>
+<td style="text-align: left;"><code>ax.loglog(s, e)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">bar of signed errors</td>
+<td style="text-align: left;">a signed deviation per condition (heading error against track error)</td>
+<td style="text-align: left;">a negative bar is the same size of error as a positive one</td>
+<td style="text-align: left;"><code>ax.bar(x, err)</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading Figure 5 (right) as a chart.</strong> Two straight lines on log-log axes with slopes 2 and 1.5 are the content: the slope is the growth law. The dotted horizontal line is the requirement; where a curve crosses it (about 11 m for the systematic error) is the distance after which the rover cannot be trusted without correction.</p>
+<h2 id="problem-set">9. Problem set</h2>
+<div class="exercise" title="Graded exercises">
+<ol type="1">
+<li>(easy) A sensor at <span class="math inline">(0.12,0)</span> in the rover frame sees an object at <span class="math inline">(0.5,-0.1)</span> in its own frame (axes parallel to the rover’s). Give the object’s rover-frame coordinates.</li>
+<li>(medium) For links 0.25 m and 0.25 m, what is the workspace, and what happens at the origin? Find both postures for the target <span class="math inline">(0.25,0.25)</span>.</li>
+<li>(medium-hard) The nozzle arm must move its tool at 0.1 m/s <em>tangentially</em> (perpendicular to the line from the base) at <span class="math inline">r=0.499</span> m. Use the Jacobian to find the joint rates and compare with the radial case at the same radius. Which direction is easier at full stretch, and why?</li>
+<li>(hard) A rover has a left wheel 0.3% small and a right wheel 0.2% large, and the track width is 1% too small in the software. It is asked to drive a straight 10 m and then spin 180 degrees. Estimate the heading and position errors (small-angle formulas), and say which error dominates.</li>
+<li>(hardest) Derive (13): show that if <span class="math inline">\theta(u)</span> has independent increments of variance <span class="math inline">2q\,du/L^2</span> then <span class="math inline">\mathrm{Var}\int_0^s\theta\,du=2qs^3/(3L^2)</span>, and find the distance at which the random lateral standard deviation equals the systematic error of a 0.1% radius mismatch (use <span class="math inline">q=4\times10^{-6}</span> and <span class="math inline">L=0.16</span> m).</li>
+</ol>
+</div>
+<h2 id="retrieval-practice-and-recap">10. Retrieval practice and recap</h2>
+<p><strong>Answers to the Section 2 predictions.</strong></p>
+<ol type="1">
+<li>Metres: 6.19 m after 20 m (30.9% of the distance), because the heading error <span class="math inline">\varepsilon s/L=0.625</span> rad integrates into a sideways error.</li>
+<li>About 13: 6.96 rad/s at 0.499 m against 0.543 rad/s at 0.30 m.</li>
+<li>About 7 degrees (7.06 by the formula, 7.01 simulated).</li>
+</ol>
+<p><strong>Answers to the Section 2 recall quiz.</strong></p>
+<ol type="1">
+<li>Three: <span class="math inline">(x,y,\theta)</span>.</li>
+<li><span class="math inline">T^{-1}</span> has rotation <span class="math inline">R^\top</span> and translation <span class="math inline">-R^\top t</span>.</li>
+<li><span class="math inline">q_2=0</span> (stretched) or <span class="math inline">\pm\pi</span> (folded); <span class="math inline">\det J=\ell_1\ell_2\sin q_2=0</span>: the tool cannot move along the arm without infinite joint speed.</li>
+<li><span class="math inline">v=(v_R+v_L)/2</span> and <span class="math inline">\omega=(v_R-v_L)/L</span>.</li>
+<li>A wrong radius is a systematic error: the same in every count, so averaging does not remove it; it must be calibrated.</li>
+</ol>
+<p><strong>Explain it to a friend.</strong></p>
+<ul>
+<li>Why does a 0.5% wheel difference ruin a 20 m straight drive but not a 20 cm one?</li>
+<li>Why does an arm with its elbow straight need huge joint speeds to move its hand outward?</li>
+<li>Why does the track width matter for turning but not for driving straight?</li>
+</ul>
+<p><strong>Re-derive by hand tomorrow, without looking:</strong> (a) the IK law of cosines (6) and <span class="math inline">q_1</span> from (7); (b) the Jacobian determinant <span class="math inline">\ell_1\ell_2\sin q_2</span>; (c) the drift <span class="math inline">\varepsilon s^2/(2L)</span> of a radius mismatch.</p>
+<h2 id="where-next">11. Where next</h2>
+<ul>
+<li><strong>Unit 9</strong> gives the wheels dynamics and a controller: the DC motor as a first-order system, P, PI and PID speed control, step-response metrics, tuning and integral windup, closing the loop around the rover model of this Unit (the shared <code>Rover</code> gains motor dynamics).</li>
+<li>Terms named here but not taught: 3-D rotations and quaternions, arm dynamics, the UMBmark test. They are registered in CURRICULUM.md.</li>
+<li><strong>Open threads:</strong> the planned reference books were not consulted; the arm and the track width are assumed; the 9 to 12% gap between the simulated random drift and its formula was not investigated beyond the sampling error; R5 is open until Unit 10.</li>
+</ul>
+<p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u7.html">&larr; Security</a><a class="btn" href="u9.html">Control &rarr;</a></p></article></div></main>
 <footer><div class="wrap">Internet of Things and Robotics crash course · Code is MIT-licensed; PDFs are for study use. Companion to the <a href="../../index.html">Generative AI and LLMs course</a>.</div></footer>
 <script>
 document.getElementById('theme').onclick=function(){var d=document.documentElement,c=d.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'),n=c==='dark'?'light':'dark';d.dataset.theme=n;try{localStorage.setItem('theme',n)}catch(e){}};

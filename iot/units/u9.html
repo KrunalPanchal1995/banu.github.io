@@ -1,15 +1,638 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Unit 9: Control Systems for Robots · IoT and Robotics</title>
+<title>Unit 9: Control Systems for Robots: From the Motor to the Line · IoT and Robotics</title>
 <meta name="description" content="From volts and sensors to MQTT, security, kinematics, control, localisation and navigation, built around one running project: a Smart Greenhouse Rover. Twelve units with a PDF and runnable code each, a 14-lab track and an assessment bank. Built for a B.Tech student; simulation-first, no hardware needed.">
 <link rel="stylesheet" href="../../assets/css/style.css"><link rel="stylesheet" href="../assets/css/iot.css">
 <script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 <link rel="stylesheet" href="../../assets/vendor/katex/katex.min.css"></head><body>
 <header class="site-head"><div class="wrap">
 <a class="brand" href="../index.html">IoT <span>&amp;</span> Robotics<span class="long"> crash course</span></a>
-<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
+<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../playground/index.html">Playground</a><a href="../labs.html">Labs</a><a href="../assessment.html">Assessment</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
 </div></header>
-<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 9</strong><a href="#topics">Syllabus topics</a></aside><article class="doc"><p><span class="chip">Unit 9</span> <span class="chip soon">in preparation</span></p><h1>Control Systems for Robots</h1><p class="lede">The motor model, P, PI and PID control, step-response metrics, tuning and windup.</p><p class="box warn">Notes and code for this unit are being written. The topics below are the syllabus.</p><h2 id="topics">Syllabus topics</h2><ul><li>Open and closed loop; on/off control</li><li>P, PI, PID; step-response metrics</li><li>Tuning and integral windup</li><li>Discrete-time implementation; heading and line following</li></ul><p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u8.html">&larr; Kinematics</a><a class="btn" href="u10.html">Perception &rarr;</a></p></article></div></main>
+<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 9</strong><a href="#session-map">Session map</a><a href="#terms-the-term-tree">1. Terms: the term tree</a><a href="#remember">2. Remember</a><a href="#understand-the-derivation">3. Understand: the derivation</a><a href="#apply">4. Apply</a><a href="#analyze">5. Analyze</a><a href="#evaluate">6. Evaluate</a><a href="#create">7. Create</a><a href="#visualization-lesson">8. Visualization lesson</a><a href="#problem-set">9. Problem set</a><a href="#retrieval-practice-and-recap">10. Retrieval practice and recap</a><a href="#where-next">11. Where next</a></aside><article class="doc"><p><span class="chip">Unit 9</span> <span class="chip ">ready</span></p><h1>Control Systems for Robots: From the Motor to the Line</h1><p class="lede">The motor model, P, PI and PID control, step-response metrics, tuning and windup.</p><div class="dl"><a class="btn primary" href="../downloads/u9/u9-notes.pdf" download>PDF notes<small>1.2 MB</small></a><a class="btn" href="../downloads/u9/u9-notes.docx" download>Word (.docx)<small>910 KB</small></a><a class="btn" href="../downloads/u9/u9-code.zip" download>All code (.zip)<small>42 KB</small></a></div><h2 id="session-map">Session map</h2>
+<div class="keyidea" title="Outcome of this session">
+<p>After this session you can:</p>
+<ol type="1">
+<li>derive the wheel motor as a first-order system, with its time constant and its gain, from the electrical and mechanical equations, and find them for the rover;</li>
+<li>explain open loop, P, PI and PID control, predict the steady-state error of a P loop, and design a PI controller by pole-zero cancellation for a chosen speed of response;</li>
+<li>measure a step response (rise time, overshoot, settling time, steady-state error), and see what sampling, delay, saturation and encoder quantisation do to a design;</li>
+<li>find the ultimate gain and period of a sampled loop exactly, apply the Ziegler–Nichols rule, and judge it against the measured response;</li>
+<li>prevent integrator windup, make the rover follow a line, find the delay it tolerates, and compute its stopping distance from the reaction latency.</li>
+</ol>
+</div>
+<ul>
+<li><strong>Prerequisites:</strong> Unit 2 (the DC motor and its voltage limit), Unit 3 (encoder quantisation, the EMA filter), Unit 4 (control loop timing), Unit 8 (the shared rover). The exponential response of Unit 1.</li>
+<li><strong>Difficulty ladder used:</strong> easy → medium → medium-hard → hard (Sections 3.1 to 3.4); the hardest tier is posed as open questions in Section 3.5.</li>
+<li><strong>Deliverables:</strong> this document (.tex, .pdf, .docx), 6 figures, the module <code>codes/robotics/control_np/</code> (the wheel motor, a discrete PID with anti-windup, step metrics, lambda and Ziegler–Nichols tuning, exact ultimate gain, line following with delay, stopping distance, and <code>DynamicRover</code>, which puts the motor loops under the shared <code>Rover</code> of Unit 8; 10 tests), and logs of every printed number.</li>
+<li><strong>Source anchors:</strong> all formulas are derived in the text. The Ziegler–Nichols constants (classic PID: <span class="math inline">K_p=0.6K_u</span>, <span class="math inline">T_i=0.5T_u</span>, <span class="math inline">T_d=0.125T_u</span>) were read in Wikipedia’s article on the method on 2026-10-11, a <strong>secondary source</strong>; the original paper (Ziegler and Nichols, <em>Trans. ASME</em> 64:759–768, 1942) and the textbook by Astrom and Murray were <strong>not</strong> read (the textbook’s host failed certificate verification, and the PDF was not downloaded). <strong>The reflected inertia <span class="math inline">J=1.0\times10^{-3}</span> kg m<span class="math inline">^2</span>, the friction coefficient 0.6, the 10 ms sample period, the one-sample delay, the 5 degree slope and the encoder quantisation are assumed or modelling choices</strong>; the motor constants are those of Unit 2.</li>
+</ul>
+<h2 id="terms-the-term-tree">1. Terms: the term tree</h2>
+<table>
+<colgroup>
+<col style="width: 22%" />
+<col style="width: 14%" />
+<col style="width: 37%" />
+<col style="width: 13%" />
+<col style="width: 10%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Term</th>
+<th style="text-align: center;">Symbol</th>
+<th style="text-align: left;">One-line meaning</th>
+<th style="text-align: center;">Where it appears</th>
+<th style="text-align: center;">New / known</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">plant</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the thing being controlled (here a wheel with its motor)</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">open loop and closed loop (feedback)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">commanding without looking, and commanding from a measurement of the result</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">known</td>
+</tr>
+<tr>
+<td style="text-align: left;">setpoint and error</td>
+<td style="text-align: center;"><span class="math inline">r</span>, <span class="math inline">e</span></td>
+<td style="text-align: left;">the wanted value; <span class="math inline">e=r-y</span> from now on (the control convention flagged in Unit 1)</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">known</td>
+</tr>
+<tr>
+<td style="text-align: left;">back-EMF and torque constant</td>
+<td style="text-align: center;"><span class="math inline">k</span></td>
+<td style="text-align: left;">the motor’s voltage and torque per unit speed and per ampere</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">known</td>
+</tr>
+<tr>
+<td style="text-align: left;">reflected inertia</td>
+<td style="text-align: center;"><span class="math inline">J</span></td>
+<td style="text-align: left;">the load’s inertia as seen at the motor shaft</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">time constant and gain (of a plant)</td>
+<td style="text-align: center;"><span class="math inline">\tau</span>, <span class="math inline">K</span></td>
+<td style="text-align: left;">the speed of a first-order response and its steady-state ratio of output to input</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">known</td>
+</tr>
+<tr>
+<td style="text-align: left;">proportional, integral, derivative action</td>
+<td style="text-align: center;"><span class="math inline">K_p</span>, <span class="math inline">K_i</span>, <span class="math inline">K_d</span></td>
+<td style="text-align: left;">output proportional to the error, to its accumulated sum, to its rate</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">PID controller</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the sum of the three actions</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">steady-state error</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the error left after the transient</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">rise time, overshoot, settling time</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">how fast, how far past, and how long until within a band</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">saturation</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the actuator’s limit (here <span class="math inline">\pm7</span> V)</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">integrator windup and anti-windup</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the integrator storing error while saturated; methods that prevent it</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">pole-zero cancellation (lambda tuning)</td>
+<td style="text-align: center;"><span class="math inline">\tau_c</span></td>
+<td style="text-align: left;">choosing <span class="math inline">T_i=\tau</span> so the closed loop is first-order with a chosen time constant</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">ultimate gain and period</td>
+<td style="text-align: center;"><span class="math inline">K_u</span>, <span class="math inline">T_u</span></td>
+<td style="text-align: left;">the P gain at which the loop just oscillates, and the period of that oscillation</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">Ziegler–Nichols tuning</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a rule that sets PID gains from <span class="math inline">K_u</span> and <span class="math inline">T_u</span></td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">delay margin</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the largest loop delay before the loop is unstable</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">line following</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">steering to keep the lateral error to a line at zero</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">stopping distance</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">distance travelled from detection to standstill</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+</tbody>
+</table>
+<p>Terms <em>used but not taught here</em>: transfer functions and Laplace transforms (used as shorthand, derived only where needed), Nyquist and Bode plots (named only), state-space control and model-predictive control (named only), Kalman filtering (Unit 10).</p>
+<h2 id="remember">2. Remember</h2>
+<div class="definition" title="What control is">
+<p>The <strong>plant</strong> is what we control; the <strong>controller</strong> computes its command from a <strong>setpoint</strong> <span class="math inline">r</span> and a <strong>measurement</strong> <span class="math inline">y</span>. With <strong>feedback</strong> (closed loop) the controller acts on the <strong>error</strong> <span class="math inline">e=r-y</span> (the sign convention of control; Unit 1 used <span class="math inline">y-r</span> for readability). Without feedback (open loop) the command ignores the result: cheap, but wrong whenever anything changes (a slope, a low battery).</p>
+</div>
+<div class="definition" title="PID in one line">
+<p>A <strong>PID controller</strong> computes the command <span class="math inline">u=K_pe+K_i\!\int e\,dt+K_d\,\dot e</span>: a part proportional to the error now, a part proportional to the error accumulated so far, and a part proportional to the error’s rate of change. With <span class="math inline">K_p</span> alone the loop leaves a <strong>steady-state error</strong>; the integral term removes it; the derivative term damps oscillation but amplifies noise.</p>
+</div>
+<div class="definition" title="The numbers we use to judge a response">
+<p>For a step in the setpoint: the <strong>rise time</strong> (time to go from 10% to 90% of the step), the <strong>overshoot</strong> (how far the response goes past the target, in percent of the step), the <strong>settling time</strong> (time until the response stays within 2% of the target) and the <strong>steady-state error</strong> (what is left at the end).</p>
+</div>
+<p><strong>Memory hooks.</strong></p>
+<ul>
+<li><em>P pushes, I remembers, D brakes.</em> P acts on the present error, I on the past, D on the future (the trend).</li>
+<li><em>A P loop is a spring, an I loop a ratchet:</em> the spring stops short of the target; the ratchet keeps winding until it gets there.</li>
+<li><em>Delay is the enemy of gain:</em> every extra sample of delay lowers the gain the loop can stand.</li>
+<li><em>An integrator must know when the actuator is maxed out.</em></li>
+<li><em>Stop distance = reaction distance + braking distance.</em></li>
+</ul>
+<p><strong>Before you read on: three predictions</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>A wheel-speed loop uses a P controller with gain 1 V per rad/s on the rover’s motor (voltage-to-speed gain 3.49 rad/s per V). The setpoint is 10 rad/s. Roughly what speed does it settle at: 10, 7.8 or 5?</li>
+<li>The rover’s wheel is held still for one second while the speed setpoint is 15 rad/s, then released. A PI controller without protection against windup: what happens right after release: nothing, a small overshoot, or a surge to about 1.6 times the setpoint?</li>
+<li>The rover brakes from 0.5 m/s as hard as its tyres allow (friction coefficient 0.6). Reacting takes 150 ms (a cloud decision). How far does it travel from the moment the obstacle is detected: 2 cm, 5 cm or about 10 cm?</li>
+</ol>
+<p><strong>Recall quiz</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>What is the time constant of a first-order system, and what fraction of its final value is reached after one time constant?</li>
+<li>Why does a P-only controller leave a steady-state error?</li>
+<li>What does an integrator do when the actuator is saturated, and why is that a problem?</li>
+<li>Why is a D term dangerous with a quantised speed measurement?</li>
+<li>What two terms make up the stopping distance?</li>
+</ol>
+<h2 id="understand-the-derivation">3. Understand: the derivation</h2>
+<h3 id="tier-1-easy-intuition-and-a-picture">3.1 Tier 1 (easy): intuition and a picture</h3>
+<p>Chapter 2 and Unit 8 made the rover’s wheels turn when the motors get a voltage; this Unit makes them turn at the <em>right speed</em>. Command a voltage and the wheel does not jump to a speed; it accelerates and settles, like the thermostat of Unit 1 settling toward a temperature. Figure 1 (left) shows the wheel’s speed after a step to 6 V: it approaches 20.9 rad/s smoothly, reaching 63% of the way (13.2 rad/s) after 112 milliseconds, the motor’s <strong>time constant</strong>. That shape is a first-order response, the same exponential as the room (Unit 1) and the RC filter (Unit 2).</p>
+<p>The trouble with commanding a <em>voltage</em> for a wanted <em>speed</em> (open loop) is that the speed depends on the load. On a 5 degree slope, each wheel needs an extra torque of <span class="math inline">m g\sin5^\circ\,r/2=0.0212</span> N m, and an open-loop wheel that was doing 15.15 rad/s (0.5 m/s) slows by 2.38 rad/s (0.079 m/s, 16%). A controller that <em>measures</em> the speed and adjusts the voltage fixes this (Figure 1, right).</p>
+<figure>
+<img src="../assets/fig/u9/fig01_motor.png" style="width:95.0%" alt="Left: open-loop response of the wheel speed to a 6 V step, with the time constant \tau=112 ms (63% of 20.9 rad/s). Right: a 5 degree slope (load torque 0.0212 N m) at t = 2 s with the wheel at 15.15 rad/s: open loop (red) drops 2.38 rad/s and stays low; P control (orange, K_p=1) was never at the setpoint (22% low) and drops a further 0.52; PI (blue) dips 0.52 rad/s and returns to the setpoint within 0.1 s of the ±2% band." />
+<figcaption aria-hidden="true">Left: open-loop response of the wheel speed to a 6 V step, with the time constant <span class="math inline">\tau=112</span> ms (63% of 20.9 rad/s). Right: a 5 degree slope (load torque 0.0212 N m) at t = 2 s with the wheel at 15.15 rad/s: open loop (red) drops 2.38 rad/s and stays low; P control (orange, <span class="math inline">K_p=1</span>) was never at the setpoint (22% low) and drops a further 0.52; PI (blue) dips 0.52 rad/s and returns to the setpoint within 0.1 s of the ±2% band.</figcaption>
+</figure>
+<h3 id="tier-2-medium-the-wheel-motor-as-a-first-order-plant">3.2 Tier 2 (medium): the wheel motor as a first-order plant</h3>
+<p>A permanent-magnet DC motor with an applied voltage <span class="math inline">u</span> and speed <span class="math inline">\omega</span> obeys two laws (Unit 2): the electrical loop <span class="math inline">u=iR+k\omega</span> (resistance drop plus back-EMF) and the mechanical law that the torque <span class="math inline">ki</span> accelerates the <strong>reflected inertia</strong> <span class="math inline">J</span> (the rotor seen through the gearbox plus half the rover’s mass, <span class="math inline">\tfrac m2r^2</span>, plus the rotor), against viscous friction <span class="math inline">b\omega</span> and a load torque <span class="math inline">\tau_L</span>: <span class="math display"> J\dot\omega=ki-b\omega-\tau_L,\qquad i=\frac{u-k\omega}{R}\quad\Longrightarrow\quad J\dot\omega=\frac kR\,u-\Big(b+\frac{k^2}{R}\Big)\omega-\tau_L. \tag{1}</span> (The coil’s inductance is neglected: its time constant is milliseconds against the mechanical 112 ms.) Divide by <span class="math inline">d=b+k^2/R</span> and rearrange: <span class="math display"> \tau\dot\omega+\omega=K\,u-\frac{\tau_L}{d},\qquad \tau=\frac Jd,\qquad K=\frac{k/R}{d}. \tag{2}</span> This is a first-order system with time constant <span class="math inline">\tau</span> and DC gain <span class="math inline">K</span> rad/s per volt, plus a load that lowers the speed by <span class="math inline">\tau_L/d</span>. With the Unit 2 motor (<span class="math inline">k=0.2328</span> V s/rad, <span class="math inline">R=7.5\ \Omega</span>) we need <span class="math inline">b</span> and <span class="math inline">J</span>. Choose the friction so that the no-load current at the rated 6 V is the catalogue 0.15 A at the no-load speed 20.94 rad/s: <span class="math inline">b=k\,i_0/\omega_0=1.667\times10^{-3}</span> N m s/rad. Then <span class="math inline">d=1.667\times10^{-3}+0.2328^2/7.5=8.891\times10^{-3}</span> and <strong><span class="math inline">K=3.491</span> rad/s per V</strong>, so <span class="math inline">6</span> V gives <span class="math inline">20.944</span> rad/s: exactly the no-load speed of Unit 2 (a check, not a coincidence of the model). With the <strong>assumed</strong> <span class="math inline">J=1.0\times10^{-3}</span> kg m<span class="math inline">^2</span> (the reflected half-mass <span class="math inline">\tfrac m2r^2=0.75\times0.033^2=8.2\times10^{-4}</span> plus about <span class="math inline">1.8\times10^{-4}</span> of reflected rotor), <span class="math inline">\tau=J/d=112.5</span> ms. The simulation reaches 63.2% of its final value at 112 ms and 95% at 336 ms, against <span class="math inline">\tau=112.5</span> ms and <span class="math inline">3\tau=337</span> ms (<code>fig01_motor.py</code>). The load droop is <span class="math inline">\tau_L/d</span>: for the slope, <span class="math inline">0.0212/0.008891=2.38</span> rad/s.</p>
+<p><em>Exact sampled form.</em> Over one sample period <span class="math inline">T_s</span> with the voltage held constant (a zero-order hold) the solution of (2) is exact: <span class="math display"> \omega_{k+1}=a\,\omega_k+(1-a)\Big(Ku-\frac{\tau_L}{d}\Big),\qquad a=e^{-T_s/\tau}. \tag{3}</span> With <span class="math inline">T_s=10</span> ms, <span class="math inline">a=0.9149</span>. The module’s <code>WheelMotor.step</code> is this update; it stays exact however large the step.</p>
+<h3 id="tier-3-medium-hard-p-pi-and-tuning-by-cancellation">3.3 Tier 3 (medium-hard): P, PI, and tuning by cancellation</h3>
+<h4 id="proportional-control-and-its-steady-state-error">3.3.1 Proportional control and its steady-state error</h4>
+<p>With <span class="math inline">u=K_pe=K_p(r-\omega)</span>, a steady state (<span class="math inline">\dot\omega=0</span>, no load) satisfies <span class="math inline">\omega=K K_p(r-\omega)</span>, so <span class="math display"> \omega_\infty=\frac{KK_p}{1+KK_p}\,r,\qquad\text{error fraction}=\frac1{1+KK_p}. \tag{4}</span> For <span class="math inline">K_p=1</span> V per rad/s: <span class="math inline">1/(1+3.491)=0.2227</span>: the loop settles 22.3% short. Prediction 1 of Section 2: about <span class="math inline">0.777\times10=7.8</span> rad/s. In simulation a 3 rad/s step ends 0.668 rad/s short, <span class="math inline">0.668/3=0.2227</span>, matching to the printed digits (Figure 2, orange). A larger gain shrinks the error but never to zero, and (Section 3.4) it cannot be raised without limit.</p>
+<h4 id="integral-action-removes-it">3.3.2 Integral action removes it</h4>
+<p>Add the integral term: <span class="math inline">u=K_p\big(e+\frac1{T_i}\int e\,dt\big)</span>. In a steady state the integral must be constant, which requires <span class="math inline">e=0</span>: <strong>the error is driven to zero whatever the plant’s gain or the load</strong> (Figure 1, right: after the slope, the PI loop returns to 15.15 rad/s exactly, by raising the voltage from 4.34 V to 5.02 V; open loop could not). The price is a slower, possibly oscillatory approach, because the integral keeps accumulating while the error is still positive.</p>
+<h4 id="designing-the-pi-by-pole-zero-cancellation">3.3.3 Designing the PI by pole-zero cancellation</h4>
+<p>Write the plant as <span class="math inline">G(s)=K/(\tau s+1)</span> and the PI controller as <span class="math inline">C(s)=K_p\frac{T_is+1}{T_is}</span>. The loop transfer is <span class="math display"> L(s)=C(s)G(s)=\frac{K_pK\,(T_is+1)}{T_is\,(\tau s+1)}\ \xrightarrow{\ T_i=\tau\ }\ \frac{K_pK}{\tau s}, \tag{5}</span> because choosing <span class="math inline">T_i=\tau</span> cancels the plant’s slow pole against the controller’s zero. A unit-feedback loop with <span class="math inline">L=K_pK/(\tau s)</span> has the closed-loop transfer <span class="math inline">L/(1+L)=1/(\tau_cs+1)</span> with <span class="math display"> \tau_c=\frac{\tau}{KK_p}\quad\Longleftrightarrow\quad K_p=\frac{\tau}{K\,\tau_c}. \tag{6}</span> The closed loop is a <em>first-order</em> system with the time constant of our choice, with no overshoot: rise time <span class="math inline">2.197\tau_c</span>, settling time <span class="math inline">3.912\tau_c</span>. We choose <span class="math inline">\tau_c=30</span> ms, a quarter of the open-loop time constant: <span class="math inline">K_p=0.1125/(3.491\times0.03)=1.074</span> V per rad/s and <span class="math inline">T_i=112.5</span> ms. Simulated with a 1 ms sample and no delay, the loop rises in 65.0 ms (design 65.9 ms) and settles in 115 ms (design 117 ms) with 0.0% overshoot: the design works. With the real 10 ms sample and one sample of delay it is less perfect, as the next table shows.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">sample period, delay</th>
+<th style="text-align: right;">rise 10 to 90%</th>
+<th style="text-align: right;">overshoot</th>
+<th style="text-align: right;">settling (2%)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">1 ms, none (ideal)</td>
+<td style="text-align: right;">65 ms</td>
+<td style="text-align: right;">0.0%</td>
+<td style="text-align: right;">115 ms</td>
+</tr>
+<tr>
+<td style="text-align: left;">5 ms, none</td>
+<td style="text-align: right;">60 ms</td>
+<td style="text-align: right;">0.1%</td>
+<td style="text-align: right;">105 ms</td>
+</tr>
+<tr>
+<td style="text-align: left;">10 ms, none</td>
+<td style="text-align: right;">50 ms</td>
+<td style="text-align: right;">0.3%</td>
+<td style="text-align: right;">90 ms</td>
+</tr>
+<tr>
+<td style="text-align: left;">10 ms, 1 sample</td>
+<td style="text-align: right;">30 ms</td>
+<td style="text-align: right;">3.5%</td>
+<td style="text-align: right;">90 ms</td>
+</tr>
+<tr>
+<td style="text-align: left;">10 ms, 2 samples</td>
+<td style="text-align: right;">20 ms</td>
+<td style="text-align: right;">31.7%</td>
+<td style="text-align: right;">220 ms</td>
+</tr>
+<tr>
+<td style="text-align: left;">20 ms, 1 sample</td>
+<td style="text-align: right;">20 ms</td>
+<td style="text-align: right;">48.5%</td>
+<td style="text-align: right;">320 ms</td>
+</tr>
+<tr>
+<td style="text-align: left;">50 ms, 1 sample</td>
+<td style="text-align: right;">(no clean rise)</td>
+<td style="text-align: right;">405%</td>
+<td style="text-align: right;">does not settle</td>
+</tr>
+</tbody>
+</table>
+<p>Table (<code>analysis_lambda.py</code>: no voltage limit, so the 10 ms, 1-sample row settles in 90 ms where the limited run of the next table says 80 ms): the lambda-tuned PI (<span class="math inline">K_p=1.074</span>, <span class="math inline">T_i=112.5</span> ms, design <span class="math inline">\tau_c=30</span> ms, 3 rad/s step, clean speed measurement) as the sampling and delay get worse. The design assumes a continuous, instantaneous loop; each extra sample of delay or longer period eats the margin, and at 50 ms the same gains make the loop unstable. <strong>A design is only as good as the loop’s timing.</strong> (A first version of the metric code reported the settling time from the start of the <em>experiment</em>, 0.1 s too long; the ideal-case row, 115 ms against a design of 117 ms, is what exposed the offset.)</p>
+<h4 id="the-step-response-numbers-for-four-controllers">3.3.4 The step-response numbers for four controllers</h4>
+<p>Four controllers on a 3 rad/s (0.1 m/s) step, with the real 10 ms sample, one sample of delay, the <span class="math inline">\pm7</span> V limit and a clean speed measurement (Figure 2, left):</p>
+<table>
+<caption>step-response metrics of the wheel-speed loop. The lambda PI is the best compromise by every measure; the more aggressive controllers rise in one sample but ring, and need the whole voltage range.</caption>
+<colgroup>
+<col style="width: 13%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">controller</th>
+<th style="text-align: right;">rise 10 to 90%</th>
+<th style="text-align: right;">overshoot</th>
+<th style="text-align: right;">settling (2%)</th>
+<th style="text-align: right;">steady-state error</th>
+<th style="text-align: right;">peak voltage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">P, <span class="math inline">K_p=1.0</span></td>
+<td style="text-align: right;">never reaches 90%</td>
+<td style="text-align: right;">0%</td>
+<td style="text-align: right;">none</td>
+<td style="text-align: right;">0.668 rad/s (22.3%)</td>
+<td style="text-align: right;">3.0 V</td>
+</tr>
+<tr>
+<td style="text-align: left;">PI, lambda (<span class="math inline">K_p=1.07</span>, <span class="math inline">T_i=112</span> ms)</td>
+<td style="text-align: right;">30 ms</td>
+<td style="text-align: right;">3.5%</td>
+<td style="text-align: right;">80 ms</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">3.5 V</td>
+</tr>
+<tr>
+<td style="text-align: left;">PI, aggressive (<span class="math inline">K_p=3</span>, <span class="math inline">T_i=112</span> ms)</td>
+<td style="text-align: right;">10 ms</td>
+<td style="text-align: right;">48.8%</td>
+<td style="text-align: right;">620 ms</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">7.0 V (saturated)</td>
+</tr>
+<tr>
+<td style="text-align: left;">PID, Ziegler–Nichols (<span class="math inline">K_p=2.02</span>, <span class="math inline">T_i=28.7</span> ms, <span class="math inline">T_d=7.2</span> ms)</td>
+<td style="text-align: right;">10 ms</td>
+<td style="text-align: right;">34.5%</td>
+<td style="text-align: right;">150 ms</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">7.0 V (saturated)</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="../assets/fig/u9/fig02_step.png" style="width:95.0%" alt="Left: wheel-speed step responses (3 rad/s at 0.1 s) of P (orange, stops 22% short), the lambda PI (blue, 3.5% overshoot), an aggressive PI with K_p=3 (green, 49% overshoot and slow ringing) and the Ziegler–Nichols PID (red, 35% overshoot). Right: with the real encoder quantisation (one count is 0.476 rad/s, 16% of the step), the voltage the controllers send at steady state: the PI is quiet (standard deviation 0.225 V), the PID with its derivative term is 3.5 times noisier (0.778 V)." />
+<figcaption aria-hidden="true">Left: wheel-speed step responses (3 rad/s at 0.1 s) of P (orange, stops 22% short), the lambda PI (blue, 3.5% overshoot), an aggressive PI with <span class="math inline">K_p=3</span> (green, 49% overshoot and slow ringing) and the Ziegler–Nichols PID (red, 35% overshoot). Right: with the real encoder quantisation (one count is 0.476 rad/s, 16% of the step), the voltage the controllers send at steady state: the PI is quiet (standard deviation 0.225 V), the PID with its derivative term is 3.5 times noisier (0.778 V).</figcaption>
+</figure>
+<p><em>Quantisation.</em> The speed is measured from encoder counts over <span class="math inline">T_s=10</span> ms (Unit 3): the step of the measurement is <span class="math inline">2\pi/1320/0.01=0.476</span> rad/s, 16% of a 3 rad/s step. A proportional term passes that jitter straight to the motor; a derivative term, which responds to <em>changes</em>, amplifies it: at steady state the voltage’s standard deviation is 0.143 V for P, 0.225 V for the lambda PI and <strong>0.778 V for the Ziegler–Nichols PID</strong>, 3.5 times the PI’s, and the aggressive PI with <span class="math inline">K_p=3</span> (89% of the ultimate gain below) is in a limit cycle of 14 V peak to peak (speed standard deviation 1.9 rad/s). The derivative term is therefore filtered (Section 3.4.1) and for a speed loop usually left out.</p>
+<h3 id="tier-4-hard-discrete-pid-tuning-rules-windup-lines-and-brakes">3.4 Tier 4 (hard): discrete PID, tuning rules, windup, lines and brakes</h3>
+<h4 id="the-discrete-pid">3.4.1 The discrete PID</h4>
+<p>The module implements the controller at a fixed sample period <span class="math inline">T_s</span> as <span class="math display"> u_k=K_pe_k+I_k+D_k,\quad I_k=I_{k-1}+K_iT_s\,e_k,\quad D_k=\alpha D_{k-1}-\frac{K_pT_dN}{T_d+NT_s}\,(y_k-y_{k-1}),\ \ \alpha=\frac{T_d}{T_d+NT_s}, \tag{7}</span> with <span class="math inline">K_i=K_p/T_i</span> and <span class="math inline">T_d=K_d/K_p</span>. Two details matter. The derivative acts on the <em>measurement</em> <span class="math inline">y</span>, not on the error: a step in the setpoint then does not produce a spike in <span class="math inline">u</span> (the “derivative kick”). And it passes through a first-order filter with a time constant <span class="math inline">T_d/N</span> (<span class="math inline">N=10</span> here) that limits the high-frequency gain to <span class="math inline">K_pN</span>.</p>
+<h4 id="the-ultimate-gain-exactly-and-zieglernichols">3.4.2 The ultimate gain, exactly, and Ziegler–Nichols</h4>
+<p>The classic closed-loop method of <strong>Ziegler and Nichols</strong> (1942) is an experiment: with P control only, raise the gain until the loop just oscillates steadily; that gain is the <strong>ultimate gain</strong> <span class="math inline">K_u</span> and the oscillation period is <span class="math inline">T_u</span>. The rule then sets (as read in the secondary source) the classic PID to <span class="math inline">K_p=0.6K_u</span>, <span class="math inline">T_i=0.5T_u</span>, <span class="math inline">T_d=0.125T_u</span> (and PI to <span class="math inline">0.45K_u</span>, <span class="math inline">0.833T_u</span>). For our sampled loop we need not experiment: the loop is linear and its stability limit is exact. With <span class="math inline">a=e^{-T_s/\tau}</span>, <span class="math inline">b=K(1-a)</span> and the voltage applied <span class="math inline">d</span> samples late, a P controller gives <span class="math inline">\omega_{k+1}=a\omega_k+bK_p(r-\omega_{k-d})</span>, whose characteristic polynomial is <span class="math display"> z^{d+1}-a\,z^{d}+bK_p=0. \tag{8}</span> The loop is stable while all roots lie inside the unit circle. For <span class="math inline">d=0</span> the single root is <span class="math inline">a-bK_p</span>, which reaches <span class="math inline">-1</span> at <span class="math inline">K_u=(1+a)/b=6.45</span> with an oscillation of two samples (<span class="math inline">T_u=20</span> ms). For <span class="math inline">d=1</span> (the usual case: one sample for computing and holding the output) the roots of <span class="math inline">z^2-az+bK_p</span> have product <span class="math inline">bK_p</span>, so they reach the unit circle when <span class="math inline">bK_p=1</span>, <strong><span class="math inline">K_u=1/b=3.3675</span></strong>, at the angle <span class="math inline">\varphi</span> with <span class="math inline">\cos\varphi=a/2</span>, i.e. <span class="math inline">\varphi=62.8^\circ</span>, <span class="math inline">T_u=2\pi T_s/\varphi=57.35</span> ms. More delay costs gain:</p>
+<table>
+<caption>ultimate gain and period of the wheel loop by delay (exact from (8); <span class="math inline">T_s=10</span> ms). The simulation confirms the limit: a P loop at <span class="math inline">0.9K_u</span> decays, at <span class="math inline">1.0K_u</span> keeps a constant amplitude (growth ratio 1.000) and at <span class="math inline">1.1K_u</span> grows twelve-fold over the same window (Figure 3, left). Doubling the delay from one to two samples cuts the usable gain by 36%.</caption>
+<colgroup>
+<col style="width: 11%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">extra delay</th>
+<th style="text-align: right;">0 samples</th>
+<th style="text-align: right;">1</th>
+<th style="text-align: right;">2</th>
+<th style="text-align: right;">3</th>
+<th style="text-align: right;">4</th>
+<th style="text-align: right;">5</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">ultimate gain <span class="math inline">K_u</span> (V per rad/s)</td>
+<td style="text-align: right;">6.449</td>
+<td style="text-align: right;">3.368</td>
+<td style="text-align: right;">2.163</td>
+<td style="text-align: right;">1.614</td>
+<td style="text-align: right;">1.303</td>
+<td style="text-align: right;">1.104</td>
+</tr>
+<tr>
+<td style="text-align: left;">period <span class="math inline">T_u</span> (ms)</td>
+<td style="text-align: right;">20.0</td>
+<td style="text-align: right;">57.4</td>
+<td style="text-align: right;">92.6</td>
+<td style="text-align: right;">126.1</td>
+<td style="text-align: right;">158.1</td>
+<td style="text-align: right;">188.9</td>
+</tr>
+<tr>
+<td style="text-align: left;">Ziegler–Nichols <span class="math inline">K_p=0.6K_u</span></td>
+<td style="text-align: right;">3.869</td>
+<td style="text-align: right;">2.021</td>
+<td style="text-align: right;">1.298</td>
+<td style="text-align: right;">0.968</td>
+<td style="text-align: right;">0.782</td>
+<td style="text-align: right;">0.663</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="../assets/fig/u9/fig03_zn.png" style="width:95.0%" alt="Left: a P-only loop around the sampled motor with one sample of delay, at 0.5, 0.9, 1.0 and 1.1 times the ultimate gain K_u=3.37: decaying, decaying, a constant oscillation of period 57 ms, and a growing one (growth ratios 0, 0.07, 1.00 and 12.0). Right: the ultimate gain (blue, log axis) falls and the oscillation period (orange) rises as delay samples are added." />
+<figcaption aria-hidden="true">Left: a P-only loop around the sampled motor with one sample of delay, at 0.5, 0.9, 1.0 and 1.1 times the ultimate gain <span class="math inline">K_u=3.37</span>: decaying, decaying, a constant oscillation of period 57 ms, and a growing one (growth ratios 0, 0.07, 1.00 and 12.0). Right: the ultimate gain (blue, log axis) falls and the oscillation period (orange) rises as delay samples are added.</figcaption>
+</figure>
+<p>For <span class="math inline">d=1</span> the rule gives <span class="math inline">K_p=2.02</span>, <span class="math inline">T_i=28.7</span> ms, <span class="math inline">T_d=7.2</span> ms: the row of the earlier table with <strong>34.5% overshoot, a saturated voltage and 3.5 times the PI’s noise</strong>. Why is a classic rule so rough here? It was built for plants whose delay is a <em>large part</em> of their time constant, and aims at a “quarter-amplitude decay” (each peak a quarter of the last), which is deliberately oscillatory. Our plant has <span class="math inline">\tau=112</span> ms and an effective delay of about 15 to 20 ms: the delay is small relative to <span class="math inline">\tau</span>, and a design that uses the delay as its only scale asks for <span class="math inline">T_i=29</span> ms, four times faster than the plant. <strong>The rule reads the plant’s timing from where the loop goes unstable, not from the plant itself.</strong> For a first-order plant with a known <span class="math inline">\tau</span> and <span class="math inline">K</span>, the lambda design of Section 3.3.3 is simpler, gentler and predictable. (This is a statement about <em>this</em> plant, with measured numbers, and not a general verdict on the rule.)</p>
+<h4 id="saturation-and-integrator-windup">3.4.3 Saturation and integrator windup</h4>
+<p>The motor voltage is limited to <span class="math inline">\pm7</span> V (Unit 2: 7.4 V pack, 0.4 V bridge drop). When the controller asks for more, the actuator saturates and the loop is effectively open. An integrator does not know this: it keeps adding <span class="math inline">K_iT_se_k</span> to its state. Suppose the wheel is <strong>blocked</strong> from 1 s to 2 s (a jam, or the rover pushed against a wall) while the setpoint is 15 rad/s. The error stays at 15 rad/s; the integrator adds <span class="math inline">K_i\times15\times1\ \text{s}</span> with <span class="math inline">K_i=K_p/T_i=9.55</span> V per rad/s per s, about 143 V, far beyond anything the actuator can use. After the release, the integrator must unwind: the output stays at the limit until the error has been negative long enough, and the wheel overshoots. In the simulation (Figure 4): with no protection the integrator holds <strong>146 V</strong> at the release, the speed surges to <strong>24.4 rad/s</strong> (1.63 times the setpoint; prediction 2 of Section 2: a surge to about 1.6) and takes 2.12 s to come back within 2%. With <strong>clamping</strong> (stop integrating while saturated and the error pushes further in the same direction) the integrator holds 4.3 V, the peak is 15.2 rad/s and the recovery takes 0.09 s; with <strong>back-calculation</strong> (<span class="math inline">I\leftarrow I+K_b(u_{\text{sat}}-u)T_s</span>, which drains the integrator while the output is limited) 7.0 V, 17.1 rad/s and 0.34 s. Either method is a single line of code; leaving it out is a common cause of robots lurching after a jam.</p>
+<figure>
+<img src="../assets/fig/u9/fig04_windup.png" style="width:95.0%" alt="Left: wheel speed when the wheel is blocked from 1 s to 2 s with a setpoint of 15 rad/s: without anti-windup (red) it surges to 24.4 rad/s after release and recovers in 2.1 s; back-calculation (orange) peaks at 17.1 rad/s; clamping (blue) at 15.2 rad/s. Right: the integrator term: 146 V stored without protection against the 7 V the motor can use; 7.0 V and 4.3 V with the two methods." />
+<figcaption aria-hidden="true">Left: wheel speed when the wheel is blocked from 1 s to 2 s with a setpoint of 15 rad/s: without anti-windup (red) it surges to 24.4 rad/s after release and recovers in 2.1 s; back-calculation (orange) peaks at 17.1 rad/s; clamping (blue) at 15.2 rad/s. Right: the integrator term: 146 V stored without protection against the 7 V the motor can use; 7.0 V and 4.3 V with the two methods.</figcaption>
+</figure>
+<h4 id="following-a-line-a-cascade-of-loops">3.4.4 Following a line: a cascade of loops</h4>
+<p>Heading and line following sit <em>above</em> the wheel loops: the outer controller turns a lateral error into a turn-rate command <span class="math inline">\omega</span>; the wheel loops (fast, <span class="math inline">\tau_c\approx30</span> ms) deliver it. For small angles the kinematics of Unit 8 give <span class="math inline">\dot y=v\theta</span> and <span class="math inline">\dot\theta=\omega</span> for the lateral offset <span class="math inline">y</span> from the line and the heading error <span class="math inline">\theta</span>. The control law <span class="math inline">\omega=-k_1y-k_2\theta</span> gives <span class="math inline">\ddot y=v\dot\theta=v\omega=-vk_1y-k_2\dot y</span>, i.e. <span class="math display"> \ddot y+k_2\dot y+vk_1\,y=0,\qquad\omega_n=\sqrt{vk_1},\quad \zeta=\frac{k_2}{2\sqrt{vk_1}}. \tag{9}</span> A damped second-order system whose time scale is set by the speed <span class="math inline">v</span>: faster travel needs a smaller <span class="math inline">k_1</span> for the same <span class="math inline">\omega_n</span>, because the same turn rate removes the offset in a longer distance. With <span class="math inline">v=0.5</span> m/s, <span class="math inline">k_1=8</span> and <span class="math inline">k_2=2.8</span>: <span class="math inline">\omega_n=2</span> rad/s and <span class="math inline">\zeta=0.7</span>. Starting 0.3 m off the line with the proper wheel loops, motor dynamics, encoder quantisation and the turn-rate limit of Unit 8 (2.39 rad/s at cruise speed), the rover undershoots by 1.3 cm and is within 1 cm of the line after 2.73 s, against 1.33 cm and 2.65 s for the ideal model (Figure 5).</p>
+<p><em>Delay.</em> If the lateral sensor reports its measurement <span class="math inline">d</span> seconds late, the open loop is <span class="math inline">L(j\omega)=vk_1e^{-j\omega d}/\big(j\omega(j\omega+k_2)\big)</span>. Its magnitude is 1 at <span class="math inline">\omega_c</span> with <span class="math inline">\omega_c\sqrt{\omega_c^2+k_2^2}=vk_1</span>, i.e. <span class="math inline">\omega_c^2=\tfrac12\big(-k_2^2+\sqrt{k_2^4+4v^2k_1^2}\big)=1.68</span>, <span class="math inline">\omega_c=1.296</span> rad/s. Its phase is <span class="math inline">-\pi/2-\arctan(\omega_c/k_2)-\omega_cd</span>, which reaches <span class="math inline">-\pi</span> at the <strong>delay margin</strong> <span class="math display"> d_{\max}=\frac{\pi/2-\arctan(\omega_c/k_2)}{\omega_c}=\frac{1.5708-0.4337}{1.296}=0.877\ \text{s}. \tag{10}</span> The simulation shows what this means in practice: the undershoot grows from 1.3 cm (no delay) to 5.1 cm (0.2 s), 18.1 cm (0.6 s, with ringing that takes 13 s to settle), 25.5 cm (0.8 s, still ringing with 14.8 cm amplitude after 14 s) and 36.6 cm (1.0 s, a sustained oscillation of 0.37 m, held at that size by the turn-rate limit). Instability begins near the closed-form 0.88 s, a little earlier (0.8 s already rings) because the motor loops add their own lag. <strong>A margin of 0.88 s is not a design target:</strong> a good response needs the delay to be a small fraction of it, here below about 0.2 s. A line sensor on the rover sees the line in milliseconds; the same sensor read through the cloud (Unit 1: 150 ms) would already cost 4 cm of undershoot.</p>
+<figure>
+<img src="../assets/fig/u9/fig05_line.png" style="width:95.0%" alt="Left: lateral error against time for the line follower (k_1=8, k_2=2.8, 0.5 m/s, start 0.3 m off the line) with a lateral-sensor delay of 0 (blue), 0.2 (green), 0.6 (orange), 0.8 (purple) and 1.0 s (red), and the ideal model (dashed): the response degrades from a clean 2.7 s settle to ringing to a sustained 0.37 m oscillation; the closed-form margin is 0.877 s. Right: the same as paths in the plane." />
+<figcaption aria-hidden="true">Left: lateral error against time for the line follower (<span class="math inline">k_1=8</span>, <span class="math inline">k_2=2.8</span>, 0.5 m/s, start 0.3 m off the line) with a lateral-sensor delay of 0 (blue), 0.2 (green), 0.6 (orange), 0.8 (purple) and 1.0 s (red), and the ideal model (dashed): the response degrades from a clean 2.7 s settle to ringing to a sustained 0.37 m oscillation; the closed-form margin is 0.877 s. Right: the same as paths in the plane.</figcaption>
+</figure>
+<h4 id="stopping-reaction-plus-braking">3.4.5 Stopping: reaction plus braking</h4>
+<p>Requirement R3 of Unit 1 asked that the rover stop before an obstacle, expressed as a loop time under 100 ms (a blind distance of 5 cm at 0.5 m/s). The rover also needs room to <em>brake</em>. The tyres can transmit a deceleration of at most <span class="math inline">\mu g</span> with the friction coefficient <span class="math inline">\mu</span> (<strong>assumed</strong> 0.6): <span class="math inline">5.89</span> m/s<span class="math inline">^2</span>, 178.4 rad/s<span class="math inline">^2</span> per wheel. The motors could brake harder than that: plug braking at <span class="math inline">-7</span> V from 15.15 rad/s gives 352 rad/s<span class="math inline">^2</span> (11.6 m/s<span class="math inline">^2</span>), twice the traction limit, so the tyres, not the motors, set the braking and any command beyond it only skids. The <strong>stopping distance</strong> from the moment an obstacle is detected is therefore <span class="math display"> s_{\text{stop}}=v\,t_{\text{react}}+\frac{v^2}{2\mu g}. \tag{11}</span> At 0.5 m/s the braking part is <span class="math inline">0.25/(2\times5.886)=2.12</span> cm (4.25 cm for a wet floor, <span class="math inline">\mu=0.3</span>; 1.42 cm for <span class="math inline">\mu=0.9</span>) and the reaction part is <span class="math inline">0.5\,t_{\text{react}}</span>: for the 15 ms edge loop, 0.75 cm, total <strong>2.87 cm</strong> (simulated: 2.85 cm); for 100 ms, <strong>7.12 cm</strong>; for the 150 ms cloud path, <strong>9.62 cm</strong> (simulated 9.60 cm). Prediction 3 of Section 2: about 10 cm. The latency that still stops within 5 cm is <span class="math inline">(0.05-0.0212)/0.5=57.5</span> ms; within 10 cm, 157.5 ms. <strong>The 100 ms of Unit 1’s requirement turns out to be too slack:</strong> it was only the reaction distance, and the rover needs another 2.1 cm to stop.</p>
+<figure>
+<img src="../assets/fig/u9/fig06_brake.png" style="width:95.0%" alt="Left: speed against distance after an obstacle is detected, braking at the traction limit (\mu=0.6): an edge reaction of 15 ms stops after 2.85 cm, a cloud reaction of 150 ms after 9.60 cm (the flat part is the rover still travelling at 0.5 m/s while it reacts). Right: stopping distance from 0.5 m/s against the reaction latency (blue line, (11)): 5 cm needs at most 57.5 ms, 10 cm at most 157.5 ms; the dots mark 15, 100 and 150 ms." />
+<figcaption aria-hidden="true">Left: speed against distance after an obstacle is detected, braking at the traction limit (<span class="math inline">\mu=0.6</span>): an edge reaction of 15 ms stops after 2.85 cm, a cloud reaction of 150 ms after 9.60 cm (the flat part is the rover still travelling at 0.5 m/s while it reacts). Right: stopping distance from 0.5 m/s against the reaction latency (blue line, (11)): 5 cm needs at most 57.5 ms, 10 cm at most 157.5 ms; the dots mark 15, 100 and 150 ms.</figcaption>
+</figure>
+<h3 id="tier-5-hardest-open-questions">3.5 Tier 5 (hardest): open questions</h3>
+<ol type="1">
+<li><strong>Why does derivative action help a heading loop but not a speed loop?</strong> Heading is the integral of the turn rate (a plant with an integrator and a lag, a second-order system); a speed loop is first-order. Use the root locus idea (named only) or simulation to show where a D term adds damping and where it only adds noise.</li>
+<li><strong>Bumpless transfer and mode switching.</strong> When the rover changes from line following to a stop command, how must the controller’s integrator be initialised so that the output does not jump?</li>
+<li><strong>Is a faster loop always better?</strong> The lambda design improves as <span class="math inline">T_s</span> falls, but a faster loop needs a faster encoder estimate and a processor that is not busy with the network (Unit 4). With a 10 ms quantisation step of 0.476 rad/s, what sample period minimises the noise in the speed estimate for a loop with a time constant of 30 ms? (Hint: consider the trade between the quantisation step <span class="math inline">2\pi/(\mathrm{CPR}\,T_s)</span> and the delay the longer window adds.)</li>
+</ol>
+<h2 id="apply">4. Apply</h2>
+<h3 id="worked-problems">4.1 Worked problems</h3>
+<p><strong>Problem 1 (motor constants).</strong> A motor has <span class="math inline">k=0.05</span> V s/rad, <span class="math inline">R=2\ \Omega</span>, friction <span class="math inline">b=10^{-4}</span> N m s/rad and reflected inertia <span class="math inline">J=2\times10^{-4}</span> kg m<span class="math inline">^2</span>. Find <span class="math inline">\tau</span>, <span class="math inline">K</span> and the speed at 12 V with no load.</p>
+<p><em>Solution.</em> <span class="math inline">d=b+k^2/R=10^{-4}+0.0025/2=1.35\times10^{-3}</span>; <span class="math inline">\tau=J/d=2\times10^{-4}/1.35\times10^{-3}=0.148</span> s; <span class="math inline">K=(k/R)/d=0.025/1.35\times10^{-3}=18.5</span> rad/s per V; at 12 V, <span class="math inline">222</span> rad/s.</p>
+<p><strong>Problem 2 (P control).</strong> The plant has <span class="math inline">K=3.49</span> rad/s per V. Which <span class="math inline">K_p</span> leaves a steady-state error of at most 5%?</p>
+<p><em>Solution.</em> <span class="math inline">1/(1+KK_p)\le0.05\Rightarrow KK_p\ge19\Rightarrow K_p\ge5.4</span> V per rad/s. That exceeds the ultimate gain of 3.37 (Section 3.4.2): impossible with P alone. This is why we use integral action.</p>
+<p><strong>Problem 3 (lambda tuning).</strong> Design a PI for <span class="math inline">\tau=0.112</span> s, <span class="math inline">K=3.49</span> and a closed-loop time constant of 50 ms.</p>
+<p><em>Solution.</em> <span class="math inline">T_i=\tau=112</span> ms; <span class="math inline">K_p=\tau/(K\tau_c)=0.112/(3.49\times0.05)=0.642</span> V per rad/s. Rise time about <span class="math inline">2.2\times50=110</span> ms.</p>
+<p><strong>Problem 4 (windup).</strong> A PI with <span class="math inline">K_i=9.5</span> V per rad/s per s sees a constant error of 10 rad/s for 0.5 s while saturated. How much does the integrator store, and how long must the output stay at the limit afterwards if the error then becomes <span class="math inline">-2</span> rad/s (voltage limit 7 V, integrator held at the value at the time of release)?</p>
+<p><em>Solution.</em> Stored <span class="math inline">9.5\times10\times0.5=47.5</span> V. To unwind to about 7 V at <span class="math inline">K_i\times2=19</span> V per second takes <span class="math inline">(47.5-7)/19=2.1</span> s. With clamping it would have stored at most about 7 V.</p>
+<p><strong>Problem 5 (stopping distance).</strong> At 0.8 m/s with <span class="math inline">\mu=0.5</span> and a reaction time of 40 ms, what is the stopping distance?</p>
+<p><em>Solution.</em> <span class="math inline">0.8\times0.04+0.64/(2\times0.5\times9.81)=0.032+0.0652=0.097</span> m (9.7 cm).</p>
+<h3 id="code-and-figures">4.2 Code and figures</h3>
+<pre class="python"><code>import control_np as C
+
+m = C.WheelMotor()                                  # tau = 112.5 ms, K = 3.491 rad/s per V
+kp, ti = C.lambda_pi(m.K, m.tau, tau_c=0.03)        # 1.074, 0.1125
+pid = C.PID(kp, kp / ti, ts=0.01, windup=&quot;clamp&quot;)
+sim = C.simulate_speed_loop(pid, m, 3.0, t_end=2.0) # dict: t, y (measured), w (true), u, r, i
+print(C.step_metrics(sim[&quot;t&quot;], sim[&quot;w&quot;], 3.0))
+print(C.ultimate_gain(m, 0.01, delay_samples=1))    # (3.3675, 0.0573)
+print(C.line_delay_margin(8.0, 2.8, 0.5))           # 0.8772 s
+print(C.stopping_distance(0.5, 0.150, mu=0.6))      # 0.0962 m
+r = C.DynamicRover(); r.set_body(0.5, 0.0); r.run(3.0)   # motor loops under the shared Rover of Unit 8</code></pre>
+<p>The module and README are in <code>codes/robotics/control_np/</code>. Its ten tests check: that the 6 V no-load speed equals the Unit 2 value and that the response reaches 63.2% at <span class="math inline">\tau</span>; the step metrics against the analytic first-order response (rise <span class="math inline">\tau\ln9</span>, settling <span class="math inline">\tau\ln50</span>) and that settling is measured from the start of the data; P-only error against <span class="math inline">1/(1+KK_p)</span> and zero error with PI; the lambda design’s 63% time against <span class="math inline">\tau_c</span>; the windup surge with none, clamping and back-calculation; the ultimate gain against the closed forms <span class="math inline">1/b</span> and <span class="math inline">(1+a)/b</span> with the simulation decaying below and growing above it; the stopping distance; line following and its delay margin against 0.877 s; and the dynamic rover’s tracking.</p>
+<p><em>What would look different if the theory were wrong?</em> If (4) were wrong, the P loop’s error would not be 22.3%; it is 22.3% to three digits. If (8) were wrong, the simulation would not flip from decay to growth exactly at <span class="math inline">K_u</span>; it does. If (10) were wrong the line follower would be stable well above 0.88 s or ringing well below it; it rings from 0.8 s and is sustained at 1.0 s, with the motor loops’ lag explaining the small gap.</p>
+<h2 id="analyze">5. Analyze</h2>
+<p><strong>Limits.</strong> As <span class="math inline">K_p\to\infty</span> the P loop’s error tends to 0 but the loop goes unstable at <span class="math inline">K_u</span>; as <span class="math inline">T_i\to\infty</span> the PI becomes a P. As the delay <span class="math inline">d\to0</span> and <span class="math inline">T_s\to0</span> the lambda design becomes exact; as <span class="math inline">d</span> grows the usable gain falls like <span class="math inline">1/(d+\tau\text{-dependent term})</span> (3.37, 2.16, 1.61 for <span class="math inline">d=1,2,3</span>). The braking distance tends to zero as <span class="math inline">\mu\to\infty</span>; the reaction distance never does.</p>
+<p><strong>Dominance.</strong> In the stopping distance, reaction dominates once <span class="math inline">t_{\text{react}}&gt;v/(2\mu g)=42</span> ms: at 150 ms it is 78% of the total (7.5 of 9.6 cm); at 15 ms braking is 74% (2.1 of 2.9 cm). For a first-order plant with sampling, the delay dominates the achievable closed-loop speed once <span class="math inline">\tau_c</span> is not much larger than a few samples.</p>
+<p><strong>Order-of-magnitude estimate.</strong> The time constant is <span class="math inline">J/(b+k^2/R)</span>; with <span class="math inline">k^2/R=7.2\times10^{-3}</span> dominating <span class="math inline">b=1.7\times10^{-3}</span>, <span class="math inline">\tau\approx10^{-3}/8.9\times10^{-3}=0.11</span> s: the electrical damping (the back-EMF) sets the speed of the motor, not the friction. This is why a shorted motor (large effective <span class="math inline">k^2/R</span>) brakes strongly.</p>
+<p><strong>Sensitivity.</strong> The lambda design’s overshoot depends steeply on the delay: 0.3% (no delay), 3.5% (1 sample), 31.7% (2 samples) at <span class="math inline">T_s=10</span> ms. The ultimate gain falls by 48% from 0 to 1 sample of delay and 36% from 1 to 2.</p>
+<p><strong>Failure modes.</strong> (1) <em>Open-loop speed control on a slope.</em> (2) <em>P-only control</em>: a permanent error. (3) <em>Integral windup after a stall.</em> (4) <em>A D term on a quantised measurement.</em> (5) <em>Gains tuned for a continuous controller on a slow, delayed loop</em> (the lambda PI at 50 ms). (6) <em>Rules applied outside their assumptions</em> (Ziegler–Nichols on a plant whose delay is small against its time constant). (7) <em>A long reaction path</em> for a safety stop (Section 3.4.5).</p>
+<p><strong>Items used from the pedagogy checklist:</strong> limits, dominance, estimate, sensitivity, failure modes, convergence (the sample period and delay table), invariants (the 6 V no-load speed equals Unit 2’s), residual (the settling-time offset caught by the ideal row), uncertainty (the quantisation noise), and a priori versus a posteriori (the P error, <span class="math inline">K_u</span> and the delay margin were computed before they were simulated).</p>
+<h2 id="evaluate">6. Evaluate</h2>
+<p><strong>P, PI or PID for the wheel?</strong> PI. P leaves a 22% error; the D term of a PID adds noise (3.5 times the voltage noise) for a first-order plant that has nothing to damp. PID earns its place on a plant with a second dynamic (a position loop, the heading loop on its own, a flexible arm).</p>
+<p><strong>Tuning rules.</strong> Lambda tuning needs a model (<span class="math inline">\tau</span> and <span class="math inline">K</span>, found from one step response) and gives a predictable closed loop. Ziegler–Nichols needs an experiment at the stability limit, which is dangerous on a real robot (it must be driven to oscillation) and, for this plant, produced a lively response. Manual tuning from the step-response table of Section 3.3.4 is also reasonable. A good practice is to simulate first, as here.</p>
+<p><strong>Cascade versus single loop.</strong> The wheel loops (30 ms) inside a heading or line loop (0.5 s time scale) separate time scales by a factor of 15 or more, which keeps each design simple; the inner loop must be fast enough that the outer one can ignore its lag.</p>
+<p><strong>Edge versus cloud for control.</strong> The line-following margin (0.88 s) is generous, but a good response needs a delay under 0.2 s; the stop needs under 57.5 ms for 5 cm. The wheel loop, with a 10 ms period, needs a delay of one sample at most. Together these put the wheel loops, the stop and the line following on the rover (the edge), as Unit 1 argued from latency alone.</p>
+<p><strong>Context.</strong> The PID controller dates from the early twentieth century, and the great majority of industrial control loops are PI or PID (a common statement from memory, not verified here). <strong>When NOT to use these methods:</strong> for strongly nonlinear plants far from the design point, for plants with long dead time (use a predictor), for multi-input systems where loops interact, or where a model-based method is justified (named: state feedback, model-predictive control).</p>
+<p><strong>Honesty about this Unit’s numbers.</strong> The motor model is first order with a viscous friction chosen to match the Unit 2 catalogue numbers and an <em>assumed</em> reflected inertia; no real wheel was measured. Every closed-loop number is a simulation of that model with the stated sample period, delay, limit and quantisation. The Ziegler–Nichols constants come from a secondary source and the original paper was not read. The friction coefficient of 0.6 and the 5 degree slope are assumed.</p>
+<h2 id="create">7. Create</h2>
+<div class="create" title="What you can build from this">
+<ol type="1">
+<li><strong>Identify the plant from data.</strong> Simulate a step with 3% measurement noise, fit <span class="math inline">\tau</span> and <span class="math inline">K</span> from the response, then design the lambda PI from the fitted values and compare its metrics with the exact design.</li>
+<li><strong>Tune to a delay budget.</strong> Choose the fastest <span class="math inline">\tau_c</span> that keeps overshoot under 5% for a loop with 2 samples of delay, using <code>step_metrics</code>.</li>
+<li><strong>A hill-start test.</strong> Drive <code>DynamicRover</code> up a slope that appears at a given time (add a load torque to both motors) and measure the speed dip and the distance lost.</li>
+<li><strong>Make the line follower speed-aware.</strong> Scale <span class="math inline">k_1</span> and <span class="math inline">k_2</span> with <span class="math inline">v</span> to keep <span class="math inline">\omega_n</span> and <span class="math inline">\zeta</span> constant, and test at 0.2 and 0.5 m/s.</li>
+<li><strong>Could become a package module:</strong> <code>iotrobotics.control</code> with <code>PID</code>, <code>WheelMotor</code>, <code>lambda_pi</code>, the step metrics and <code>DynamicRover</code>, reused by Units 10 to 12.</li>
+</ol>
+</div>
+<p><strong>Running project, Layer 8: wheel-speed and heading control.</strong> The rover’s wheels now run PI loops (lambda tuned, <span class="math inline">K_p=1.07</span> V per rad/s, <span class="math inline">T_i=112</span> ms, anti-windup by clamping, 10 ms period, one sample of delay) under a line-following law (<span class="math inline">k_1=8</span>, <span class="math inline">k_2=2.8</span>). Updated requirements:</p>
+<table>
+<caption>running-project requirements updated by Unit 9. R5 (position error) is closed in Unit 10; R3 with real sensors in Unit 11.</caption>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">id</th>
+<th style="text-align: left;">requirement</th>
+<th style="text-align: left;">status after Unit 9</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">R3</td>
+<td style="text-align: left;">the rover stops before an obstacle</td>
+<td style="text-align: left;"><strong>restated</strong>: stopping distance from detection under 5 cm needs a reaction latency of at most 57.5 ms (2.87 cm at the 15 ms edge loop; 7.12 cm at 100 ms; 9.62 cm at the 150 ms cloud path); the old “loop under 100 ms” gave 7.1 cm; verified with the real sensors in Unit 11</td>
+</tr>
+<tr>
+<td style="text-align: left;">R30 (new)</td>
+<td style="text-align: left;">wheel speed settles within 2% in 100 ms with at most 5% overshoot for 0.1 m/s steps</td>
+<td style="text-align: left;">met in simulation: 80 ms, 3.5% (clean measurement); fails with two samples of delay (31.7% overshoot)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R31 (new)</td>
+<td style="text-align: left;">speed within 2% of the setpoint on a 5 degree slope</td>
+<td style="text-align: left;">PI dips 3.5% for 0.10 s and returns exactly; open loop drops 16% and stays</td>
+</tr>
+<tr>
+<td style="text-align: left;">R32 (new)</td>
+<td style="text-align: left;">after a stall the wheel does not surge</td>
+<td style="text-align: left;">clamping: peak 15.2 rad/s (1.6% over) and 0.09 s recovery; without it 24.4 rad/s and 2.1 s</td>
+</tr>
+<tr>
+<td style="text-align: left;">R33 (new)</td>
+<td style="text-align: left;">the rover reaches the line (within 1 cm) from a 0.3 m offset within 3 s</td>
+<td style="text-align: left;">met up to a lateral-sensor delay of 0.2 s (2.97 s); the delay margin is 0.88 s; the lateral sensor must be on the rover</td>
+</tr>
+<tr>
+<td style="text-align: left;">R34 (new)</td>
+<td style="text-align: left;">control loop timing</td>
+<td style="text-align: left;">wheel loop period 10 ms with at most one sample of delay; two samples cost 32% overshoot</td>
+</tr>
+<tr>
+<td style="text-align: left;">S1</td>
+<td style="text-align: left;">safe state when the link is lost (Unit 7)</td>
+<td style="text-align: left;">the stop command uses the same loops: braking is traction-limited at 5.9 m/s<span class="math inline">^2</span>, so a stop from 0.5 m/s takes 0.085 s after the command</td>
+</tr>
+</tbody>
+</table>
+<h2 id="visualization-lesson">8. Visualization lesson</h2>
+<table>
+<caption>the chart types of this Unit. Ladder: <em>remember</em> the names; <em>understand</em> what each shows; <em>apply</em> the call; <em>analyse</em> how it misleads; <em>evaluate</em> when a table is better (the controller comparison of Section 3.3.4: the reader wants exact overshoot and settling numbers); <em>create</em> a new one (a gain-against-delay stability map).</caption>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Chart type</th>
+<th style="text-align: left;">Best for</th>
+<th style="text-align: left;">How it misleads</th>
+<th style="text-align: left;">matplotlib call</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">step-response plot with a target line</td>
+<td style="text-align: left;">judging a controller (rise, overshoot, settling)</td>
+<td style="text-align: left;">different step sizes or time axes make controllers look alike or different; use the same step</td>
+<td style="text-align: left;"><code>ax.plot(t, y)</code>, <code>ax.axhline(r, ls=":")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">family of responses near a stability limit</td>
+<td style="text-align: left;">seeing how a loop approaches instability</td>
+<td style="text-align: left;">a fixed time window hides slow growth; print the growth ratio</td>
+<td style="text-align: left;"><code>ax.plot(t, y_k)</code> for several gains</td>
+</tr>
+<tr>
+<td style="text-align: left;">control-effort plot (the command as well as the output)</td>
+<td style="text-align: left;">what the controller asks of the actuator</td>
+<td style="text-align: left;">an output that looks perfect may need a saturated, noisy command</td>
+<td style="text-align: left;"><code>ax.plot(t, u)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">two-panel output and internal state (speed and integrator)</td>
+<td style="text-align: left;">explaining windup</td>
+<td style="text-align: left;">the integrator’s size (146 V) dwarfs the actuator’s range; mark the limit</td>
+<td style="text-align: left;"><code>ax.plot(t, i)</code>, <code>ax.axhline(7)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">delay sweep (several delays on one axes)</td>
+<td style="text-align: left;">the cost of a parameter</td>
+<td style="text-align: left;">too many curves; choose a few that tell the story (0, 0.2, 0.6, 0.8, 1.0 s)</td>
+<td style="text-align: left;"><code>ax.plot(t, y_d)</code> per delay</td>
+</tr>
+<tr>
+<td style="text-align: left;">path in the plane with equal axes</td>
+<td style="text-align: left;">what the robot actually did</td>
+<td style="text-align: left;">the time axis is gone; add a second panel against time</td>
+<td style="text-align: left;"><code>ax.plot(x, y)</code>, <code>ax.set(aspect="equal")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">budget line with threshold bands</td>
+<td style="text-align: left;">a requirement as a limit on a parameter (latency for a stop distance)</td>
+<td style="text-align: left;">the line is exact only for the stated friction; say it</td>
+<td style="text-align: left;"><code>ax.plot(lat, s)</code>, <code>ax.axhline(5)</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading Figure 2 (right) as a chart.</strong> The output panel says all three controllers reach the setpoint; the effort panel is what separates them. A step-response plot alone would have rated the Ziegler–Nichols PID as “fast”; its command shows 3.5 times the noise.</p>
+<h2 id="problem-set">9. Problem set</h2>
+<div class="exercise" title="Graded exercises">
+<ol type="1">
+<li>(easy) A first-order system has <span class="math inline">\tau=0.2</span> s and <span class="math inline">K=5</span>. What is its output 0.4 s after a unit step, and its 2% settling time?</li>
+<li>(medium) A P loop around the rover’s wheel motor (<span class="math inline">K=3.49</span>) uses <span class="math inline">K_p=0.6</span>. Find the steady-state error for a 12 rad/s setpoint and the extra error when a load adds a <span class="math inline">-0.0212</span> N m torque (use <span class="math inline">d=8.89\times10^{-3}</span>).</li>
+<li>(medium-hard) Design a lambda PI with <span class="math inline">\tau_c=20</span> ms for <span class="math inline">\tau=112.5</span> ms and <span class="math inline">K=3.491</span>. Using (8) with <span class="math inline">a=e^{-0.01/0.1125}</span>, check whether the integral-free part (<span class="math inline">K_p</span> alone, one sample of delay) is below the ultimate gain, and estimate the overshoot from the table of Section 3.3.3.</li>
+<li>(hard) Derive the characteristic polynomial (8) for <span class="math inline">d=1</span> and show that the ultimate gain is <span class="math inline">1/b</span> and <span class="math inline">\cos\varphi=a/2</span>. Evaluate <span class="math inline">T_u</span> for <span class="math inline">T_s=20</span> ms (with <span class="math inline">\tau=112.5</span> ms).</li>
+<li>(hardest) A rover reacts to an obstacle with a total latency of <span class="math inline">t_r</span> and brakes at <span class="math inline">\mu g</span>. The ultrasonic sensor first sees obstacles at 1.5 m range and the rover cruises at 0.5 m/s. Find the maximum cruise speed for which the rover stops before an obstacle detected at 1.5 m, for <span class="math inline">t_r=15</span> ms and <span class="math inline">t_r=150</span> ms and <span class="math inline">\mu=0.3</span> (a wet floor). State what you conclude about speed limits.</li>
+</ol>
+</div>
+<h2 id="retrieval-practice-and-recap">10. Retrieval practice and recap</h2>
+<p><strong>Answers to the Section 2 predictions.</strong></p>
+<ol type="1">
+<li>About 7.8 rad/s: <span class="math inline">K_p K/(1+K_pK)\times10=0.777\times10</span>.</li>
+<li>A surge to about 1.6 times the setpoint (24.4 rad/s against 15), with 146 V stored in the integrator.</li>
+<li>About 10 cm (9.62 cm): 7.5 cm of travel while reacting plus 2.1 cm of braking.</li>
+</ol>
+<p><strong>Answers to the Section 2 recall quiz.</strong></p>
+<ol type="1">
+<li>The time for the response to cover 63.2% of the way to its final value (<span class="math inline">1-e^{-1}</span>).</li>
+<li>A steady state with a nonzero command requires a nonzero error when the controller is proportional only: the command is <span class="math inline">K_p</span> times the error.</li>
+<li>It keeps accumulating the error although the actuator cannot respond, storing far more than can be used; after the disturbance ends it must unwind, causing a surge.</li>
+<li>A derivative term responds to changes, and a quantised measurement jumps by one count at a time, so the derivative turns quantisation jitter into large command noise.</li>
+<li>The distance travelled during the reaction (speed times latency) and the braking distance (<span class="math inline">v^2/2\mu g</span>).</li>
+</ol>
+<p><strong>Explain it to a friend.</strong></p>
+<ul>
+<li>Why does a thermostat-like P controller on a motor never quite reach the speed you ask for?</li>
+<li>Why can a wheel controller hurt the robot after the robot has been held still?</li>
+<li>Why does a delay of a few hundredths of a second matter for a wheel loop but a delay of a tenth of a second not for a line follower?</li>
+</ul>
+<p><strong>Re-derive by hand tomorrow, without looking:</strong> (a) <span class="math inline">\tau=J/(b+k^2/R)</span> and <span class="math inline">K=(k/R)/(b+k^2/R)</span> from the motor equations; (b) <span class="math inline">T_i=\tau</span>, <span class="math inline">K_p=\tau/(K\tau_c)</span> from cancellation; (c) the stopping distance <span class="math inline">vt+v^2/(2\mu g)</span>.</p>
+<h2 id="where-next">11. Where next</h2>
+<ul>
+<li><strong>Unit 10</strong> gives the rover eyes and a memory of where it has been: Gaussian noise, Bayes’ rule, the Kalman filter, sensor fusion of the encoders with a gyroscope, ultrasonic ranging errors and an occupancy grid, which is what closes the odometry-drift requirement R5 of Unit 8.</li>
+<li>Terms named here but not taught: transfer functions and Bode plots, state-space and model-predictive control. They are registered in CURRICULUM.md.</li>
+<li><strong>Open threads:</strong> the Ziegler–Nichols original and the textbook were not read; <span class="math inline">J</span>, <span class="math inline">\mu</span>, the slope and the sample period are assumed; a real wheel’s response was not measured; the heading loop was tested only through the line follower.</li>
+</ul>
+<p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u8.html">&larr; Kinematics</a><a class="btn" href="u10.html">Perception &rarr;</a></p></article></div></main>
 <footer><div class="wrap">Internet of Things and Robotics crash course · Code is MIT-licensed; PDFs are for study use. Companion to the <a href="../../index.html">Generative AI and LLMs course</a>.</div></footer>
 <script>
 document.getElementById('theme').onclick=function(){var d=document.documentElement,c=d.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'),n=c==='dark'?'light':'dark';d.dataset.theme=n;try{localStorage.setItem('theme',n)}catch(e){}};

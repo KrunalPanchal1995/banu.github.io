@@ -1,15 +1,687 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Unit 11: Path Planning, Navigation and ROS · IoT and Robotics</title>
+<title>Unit 11: Path Planning, Navigation and ROS: Getting There Safely · IoT and Robotics</title>
 <meta name="description" content="From volts and sensors to MQTT, security, kinematics, control, localisation and navigation, built around one running project: a Smart Greenhouse Rover. Twelve units with a PDF and runnable code each, a 14-lab track and an assessment bank. Built for a B.Tech student; simulation-first, no hardware needed.">
 <link rel="stylesheet" href="../../assets/css/style.css"><link rel="stylesheet" href="../assets/css/iot.css">
 <script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 <link rel="stylesheet" href="../../assets/vendor/katex/katex.min.css"></head><body>
 <header class="site-head"><div class="wrap">
 <a class="brand" href="../index.html">IoT <span>&amp;</span> Robotics<span class="long"> crash course</span></a>
-<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
+<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../playground/index.html">Playground</a><a href="../labs.html">Labs</a><a href="../assessment.html">Assessment</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
 </div></header>
-<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 11</strong><a href="#topics">Syllabus topics</a></aside><article class="doc"><p><span class="chip">Unit 11</span> <span class="chip soon">in preparation</span></p><h1>Path Planning, Navigation and ROS</h1><p class="lede">BFS, Dijkstra and A*, obstacle inflation, pure pursuit, and the ROS 2 concepts.</p><p class="box warn">Notes and code for this unit are being written. The topics below are the syllabus.</p><h2 id="topics">Syllabus topics</h2><ul><li>Configuration space and grid graphs</li><li>BFS, Dijkstra, A*; obstacle inflation</li><li>Pure-pursuit path following</li><li>ROS 2 nodes, topics, services, tf; simulators</li></ul><p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u10.html">&larr; Perception</a><a class="btn" href="u12.html">Capstone &rarr;</a></p></article></div></main>
+<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 11</strong><a href="#session-map">Session map</a><a href="#terms-the-term-tree">1. Terms: the term tree</a><a href="#remember">2. Remember</a><a href="#understand-the-derivation">3. Understand: the derivation</a><a href="#apply">4. Apply</a><a href="#analyze">5. Analyze</a><a href="#evaluate">6. Evaluate</a><a href="#create">7. Create</a><a href="#visualization-lesson">8. Visualization lesson</a><a href="#problem-set">9. Problem set</a><a href="#retrieval-practice-and-recap">10. Retrieval practice and recap</a><a href="#where-next">11. Where next</a></aside><article class="doc"><p><span class="chip">Unit 11</span> <span class="chip ">ready</span></p><h1>Path Planning, Navigation and ROS: Getting There Safely</h1><p class="lede">BFS, Dijkstra and A*, obstacle inflation, pure pursuit, and the ROS 2 concepts.</p><div class="dl"><a class="btn primary" href="../downloads/u11/u11-notes.pdf" download>PDF notes<small>724 KB</small></a><a class="btn" href="../downloads/u11/u11-notes.docx" download>Word (.docx)<small>488 KB</small></a><a class="btn" href="../downloads/u11/u11-code.zip" download>All code (.zip)<small>40 KB</small></a></div><h2 id="session-map">Session map</h2>
+<div class="keyidea" title="Outcome of this session">
+<p>After this session you can:</p>
+<ol type="1">
+<li>turn an occupancy grid into a graph and find a shortest path with breadth-first search, Dijkstra’s algorithm and A*, and explain what makes a heuristic admissible;</li>
+<li>inflate obstacles by the robot’s size, and see what an un-inflated plan does to a robot that is not a point;</li>
+<li>follow a path with pure pursuit, derive its error dynamics, choose the lookahead distance, and choose an order in which to visit several goals;</li>
+<li>compute the stopping and link-loss budgets that decide how fast the ultrasonic sensor must ping and how long a command timeout may be;</li>
+<li>describe the rover as a ROS 2 graph of nodes, topics, a service, an action and a tf tree, and run its message flow on a miniature bus.</li>
+</ol>
+</div>
+<ul>
+<li><strong>Prerequisites:</strong> Unit 8 (frames, SE(2) transforms, the shared rover), Unit 9 (steering law, delay margin, stopping distance), Unit 10 (the occupancy grid, ranges). Basic graph ideas (nodes and edges).</li>
+<li><strong>Difficulty ladder used:</strong> easy → medium → medium-hard → hard (Sections 3.1 to 3.4); the hardest tier is posed as open questions in Section 3.5.</li>
+<li><strong>Deliverables:</strong> this document (.tex, .pdf, .docx), 6 figures, the module <code>codes/robotics/planning_np/</code> (<code>bfs</code>, <code>dijkstra</code>, <code>astar</code> with weights, <code>inflate</code>, <code>shortcut</code>, <code>follow_path</code> with pure pursuit on the shared rover, <code>visit_orders</code>, the stopping and watchdog budgets, a miniature <code>Bus</code> and <code>TFTree</code>; 8 tests, the planners cross-checked against networkx), and logs of every printed number.</li>
+<li><strong>Source anchors:</strong> all algorithms and formulas are derived or checked in the text. <strong>Hart, Nilsson and Raphael (1968) and Dijkstra (1959) were not read</strong>; the optimality of A* is argued from first principles in Section 3.3 and the planners are checked against networkx’s shortest paths on random grids and on the real map. The ROS 2 definitions (node, topic, service, action, launch file, tf2) were read in the ROS 2 documentation (Jazzy), “Concepts” and the tf2 and launch tutorials, on 2026-10-11; <strong>ROS 2 itself is not installed and nothing here ran under it</strong>: the miniature bus only imitates the ideas. <strong>The greenhouse layout, the rover’s body circle (0.13 m), the margin (2 cm), the friction coefficient 0.6 and the sensor ping period are assumed</strong>; the ultrasonic “60 ms minimum cycle” is from memory and was not checked against a datasheet.</li>
+</ul>
+<h2 id="terms-the-term-tree">1. Terms: the term tree</h2>
+<table>
+<colgroup>
+<col style="width: 22%" />
+<col style="width: 14%" />
+<col style="width: 37%" />
+<col style="width: 13%" />
+<col style="width: 10%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Term</th>
+<th style="text-align: center;">Symbol</th>
+<th style="text-align: left;">One-line meaning</th>
+<th style="text-align: center;">Where it appears</th>
+<th style="text-align: center;">New / known</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">occupancy grid</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a map as a grid of occupied or free cells (Unit 10)</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">known</td>
+</tr>
+<tr>
+<td style="text-align: left;">configuration space</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the space of all poses the robot can take; obstacles become forbidden regions</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">grid graph</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">cells as nodes, moves to neighbouring free cells as edges with a cost</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">breadth-first search (BFS)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">expands cells in rings of equal step count; finds the fewest steps</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">Dijkstra’s algorithm</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">expands the cell of smallest cost so far; finds the cheapest path</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">A* search</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">Dijkstra guided by a heuristic estimate of the cost to go</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">heuristic: admissible, consistent</td>
+<td style="text-align: center;"><span class="math inline">h</span></td>
+<td style="text-align: left;">an estimate of cost to go that never overestimates (admissible) and obeys the triangle rule (consistent)</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">obstacle inflation</td>
+<td style="text-align: center;"><span class="math inline">r_{\text{inf}}</span></td>
+<td style="text-align: left;">growing obstacles by the robot’s radius plus a margin so the robot can be planned as a point</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">path smoothing (line of sight)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">replacing a staircase of waypoints by long straight segments that stay free</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">weighted A*</td>
+<td style="text-align: center;"><span class="math inline">w</span></td>
+<td style="text-align: left;">A* with the heuristic multiplied by <span class="math inline">w\ge1</span>: faster, at a bounded loss of optimality</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">pure pursuit</td>
+<td style="text-align: center;"><span class="math inline">L_d</span></td>
+<td style="text-align: left;">steering along the circle that reaches a point a lookahead distance ahead on the path</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">lookahead distance</td>
+<td style="text-align: center;"><span class="math inline">L_d</span></td>
+<td style="text-align: left;">how far ahead on the path the target point is taken</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">cross-track error</td>
+<td style="text-align: center;"><span class="math inline">e</span></td>
+<td style="text-align: left;">the distance of the robot from the path</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">visiting order</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the order in which several goals are visited (a travelling-salesman problem)</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">watchdog (command timeout)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">stop automatically when no valid command arrives within a time</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">ROS 2 node</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a participant in the ROS 2 graph that communicates through a client library</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">topic, service, action</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">continuous publish-subscribe stream; remote procedure call; long-running call with feedback and cancel</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">tf (transform tree)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a tree of coordinate frames and the transforms between them</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">launch file</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a file that starts and configures many nodes together</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+</tbody>
+</table>
+<p>Terms <em>used but not taught here</em>: the travelling-salesman problem in general (named; NP-hard stated, not proved), probabilistic roadmaps and RRT (named), the dynamic window approach and potential fields (named), Gazebo and Webots (overview only, Section 6), Nav2 (named).</p>
+<h2 id="remember">2. Remember</h2>
+<div class="definition" title="Planning, in one sentence">
+<p><strong>Planning</strong> chooses a sequence of poses from here to a goal that avoids obstacles; <strong>navigation</strong> adds following the plan and reacting when it fails. The pipeline of the rover: <em>map</em> (Unit 10) → <em>planner</em> (shortest free path) → <em>controller</em> (pure pursuit on the path, Unit 9 wheel loops) → <em>motors</em>.</p>
+</div>
+<div class="definition" title="Search on a graph">
+<p>Every planner here keeps a <strong>frontier</strong> of cells to expand, a record of the cost to reach each cell (<strong>g</strong>) and its <strong>parent</strong>. They differ only in which frontier cell they expand next: the oldest (BFS), the cheapest so far (Dijkstra), the one with the smallest cost-so-far plus estimated cost-to-go (A*).</p>
+</div>
+<div class="definition" title="Admissible heuristic">
+<p>A heuristic <span class="math inline">h(n)</span> estimating the cost from <span class="math inline">n</span> to the goal is <strong>admissible</strong> if <span class="math inline">h(n)\le h^*(n)</span>, the true cost. It is <strong>consistent</strong> if <span class="math inline">h(n)\le c(n,n&#39;)+h(n&#39;)</span> for every move. With a consistent heuristic A* expands each cell at most once and its first path to the goal is optimal.</p>
+</div>
+<p><strong>Memory hooks.</strong></p>
+<ul>
+<li><em>BFS counts steps, Dijkstra counts cost, A</em> counts cost and looks toward the goal.*</li>
+<li><em>A</em> is Dijkstra with a compass.*</li>
+<li><em>Inflate the world, shrink the robot to a point.</em></li>
+<li><em>Pure pursuit chases a carrot a fixed distance ahead; a long carrot cuts corners, a short one oscillates under delay.</em></li>
+<li><em>Stopping distance depends on how often the sensor looks.</em></li>
+</ul>
+<p><strong>Before you read on: three predictions</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>On the 24000-cell greenhouse map, Dijkstra expands about 12800 cells to find the dock-to-plant path. A* with a good heuristic expands: about 12000, about 6000 or about 500?</li>
+<li>If the planner ignores the rover’s size and the straight route passes through a gap 0.20 m wide (the rover is 0.26 m across), what happens to the robot: it squeezes through, it stops, or it hits the obstacle edges?</li>
+<li>The rover brakes at the traction limit from 0.5 m/s and its edge loop takes 15 ms. The ultrasonic sensor pings every 60 ms. Is the worst-case stopping distance under the 5 cm of requirement R3?</li>
+</ol>
+<p><strong>Recall quiz</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>Which search finds the path with the fewest steps, and which the path of least cost?</li>
+<li>What does an admissible heuristic guarantee for A*?</li>
+<li>Why inflate obstacles by more than the robot’s radius on a grid of square cells?</li>
+<li>What does the lookahead distance of pure pursuit trade off?</li>
+<li>What is the difference between a ROS 2 topic and a service?</li>
+</ol>
+<h2 id="understand-the-derivation">3. Understand: the derivation</h2>
+<h3 id="tier-1-easy-the-map-as-a-graph-and-breadth-first-search">3.1 Tier 1 (easy): the map as a graph, and breadth-first search</h3>
+<p>The occupancy grid of Unit 10 already is a graph in disguise. Take the free cells as <strong>nodes</strong> and join each cell to its eight neighbours with an <strong>edge</strong>; the cost of a move is its length: 1 cell for a side move, <span class="math inline">\sqrt2=1.414</span> for a diagonal. A diagonal move is allowed only when both side cells it passes are free (no cutting corners; the module’s test checks this). The rover’s <strong>configuration</strong> is its pose <span class="math inline">(x,y,\theta)</span>; for a round body the heading does not matter for collisions, so the <strong>configuration space</strong> is the 2-D map once the obstacles have been grown (Section 3.3).</p>
+<p>Our test world is a greenhouse of 10 m by 6 m with 5 cm cells (200 by 120 = 24000 cells): two plant beds, a crate that leaves a gap of 0.20 m between bed 2 and the crate, a dock at the lower left and four dry plants (the layout is assumed). The task of Figure 1: from the dock (cell (11, 11)) to plant P4 (cell (100, 120)).</p>
+<p><strong>Breadth-first search</strong> keeps a first-in-first-out queue. Starting from the dock it expands the cells one step away, then two steps, and so on, like ripples; when the goal is reached the parent pointers give a path with the fewest steps. It treats a diagonal move as one step, so it minimises the number of steps, not the length: on this map it finds 158 steps of total length 8.728 m, which happens to be the shortest. Over 150 random start-goal pairs the BFS path was longer than the optimum in 1 pair, by at most 0.77% (mean ratio 1.0001): nearly equal here because the costs differ only between side and diagonal moves, but not guaranteed (<code>fig01_log.txt</code>). It expands 12255 cells: it has no sense of direction.</p>
+<h3 id="tier-2-medium-dijkstras-algorithm-and-a">3.2 Tier 2 (medium): Dijkstra’s algorithm and A*</h3>
+<p><strong>Dijkstra’s algorithm</strong> replaces the queue by a priority queue ordered by <span class="math inline">g(n)</span>, the cheapest cost found so far to reach <span class="math inline">n</span>. It always expands the cheapest frontier cell. The first time the goal is expanded, its cost is optimal: any other route would have to pass through a frontier cell that is at least as costly (all edge costs are positive). On the greenhouse map it finds the same 8.728 m path, expanding 12760 cells; the list of cells it opens is the whole disc of cells nearer to the dock than the goal (Figure 1, upper right).</p>
+<p><strong>A*</strong> orders the frontier by <span class="math inline">f(n)=g(n)+h(n)</span> with <span class="math inline">h</span> an estimate of the remaining cost. For 8-connected moves the natural estimate is the <strong>octile distance</strong>: for offsets <span class="math inline">(\Delta_1,\Delta_2)</span> cells, take the smaller <span class="math inline">m=\min</span> and the larger <span class="math inline">M</span> and <span class="math display"> h(n)=(M-m)+\sqrt2\,m=(\Delta_1+\Delta_2)+(\sqrt2-2)\min(\Delta_1,\Delta_2). \tag{1}</span> It is the exact cost of a route across an empty map, so it can never overestimate the cost when obstacles are present: it is <strong>admissible</strong>; and since the exact cost obeys the triangle rule, it is <strong>consistent</strong>. (For a goal 5 cells right and 3 up: <span class="math inline">8-0.586\times3=6.243</span> cells; the straight-line distance is 5.831, the Manhattan distance 8: too large, and so inadmissible for 8-connected moves.)</p>
+<p><em>Why the first goal expansion is optimal.</em> Let <span class="math inline">C^*</span> be the optimal cost. At any time some cell <span class="math inline">n</span> of an optimal path is on the frontier with <span class="math inline">g(n)=g^*(n)</span>, so <span class="math inline">f(n)=g^*(n)+h(n)\le g^*(n)+h^*(n)=C^*</span>. The goal’s <span class="math inline">f</span> equals its <span class="math inline">g</span> (since <span class="math inline">h=0</span> there), so it cannot be expanded with <span class="math inline">g&gt;C^*</span> while such an <span class="math inline">n</span> waits with <span class="math inline">f\le C^*</span>. Hence the first time the goal is expanded its cost is <span class="math inline">C^*</span>. (This is the standard argument; it is written here from first principles and was not checked against the original paper.)</p>
+<p><strong>The result</strong> (Figure 1): A* with the octile heuristic expands <strong>5627 cells</strong> against Dijkstra’s 12760 (2.27 times fewer) and finds the same 8.728 m path; with the straight-line heuristic, also admissible but weaker, it expands 6843. Prediction 1 of Section 2: about 6000. The cells it opens form a narrow band along the way to the goal. All three planners were cross-checked against networkx: the cost of 8.728 m agrees to <span class="math inline">10^{-9}</span>, and on 8 random 30 by 30 grids with a quarter of the cells blocked, A* and Dijkstra match the networkx cost every time (or both report that no path exists). With a 4-connected move set the same task costs 9.900 m: allowing diagonals shortens the route by 12%.</p>
+<figure>
+<img src="../assets/fig/u11/fig01_search.png" style="width:95.0%" alt="Four planners on the inflated greenhouse grid from the dock (green dot) to plant P4 (blue star): BFS (fewest steps, 158; 12255 cells expanded), Dijkstra (cheapest, 12760 expanded), A* with the octile heuristic (same 8.73 m path, 5627 expanded) and weighted A* with w=3 (8.94 m, 3280 expanded). Light grey: cells expanded; black: obstacles; dark grey: the inflated margin. The wiggles in the paths are ties between equal-cost routes, not errors." />
+<figcaption aria-hidden="true">Four planners on the inflated greenhouse grid from the dock (green dot) to plant P4 (blue star): BFS (fewest steps, 158; 12255 cells expanded), Dijkstra (cheapest, 12760 expanded), A* with the octile heuristic (same 8.73 m path, 5627 expanded) and weighted A* with <span class="math inline">w=3</span> (8.94 m, 3280 expanded). Light grey: cells expanded; black: obstacles; dark grey: the inflated margin. The wiggles in the paths are ties between equal-cost routes, not errors.</figcaption>
+</figure>
+<p>Run times in Python were 30 to 70 ms for any of the planners and varied by a factor of two between runs, so only the <em>counts of expanded cells</em> are quoted: they do not depend on the machine.</p>
+<h3 id="tier-3-medium-hard-inflation-smoothing-and-weights">3.3 Tier 3 (medium-hard): inflation, smoothing and weights</h3>
+<h4 id="obstacle-inflation">3.3.1 Obstacle inflation</h4>
+<p>The planners treat the rover as a point; the rover is not. The standard fix: <strong>inflate</strong> every obstacle by the rover’s radius, so that a point in the inflated map is a safe centre of the real body. Take the rover as contained in a circle of radius 0.13 m (assumed: the half-width 0.10 m of Unit 10 plus body length). On a grid of square 5 cm cells there is a subtlety: our inflation marks every cell whose <em>centre</em> is within <span class="math inline">r_{\text{inf}}</span> of an occupied cell <em>centre</em>, but the real obstacle is a <em>square</em>, whose face lies half a cell (2.5 cm) nearer. A rover planned with <span class="math inline">r_{\text{inf}}=0.13</span> m can therefore come within <span class="math inline">0.13-0.025=0.105</span> m of an obstacle face, which is less than its radius. We take <span class="math display"> r_{\text{inf}}=r_{\text{rover}}+\tfrac12\,\text{cell}+\text{margin}=0.13+0.025+0.02=0.175\ \text{m}. \tag{2}</span> (Before this correction the module’s own collision check, which tests the disc against the cell <em>squares</em>, caught one sample point of a path inflated by 0.15 m.) The price: the free area of the map falls from 20064 cells to 18830 at 0.10 m and <strong>16396 at 0.175 m (18% less)</strong>.</p>
+<p><em>The experiment</em> (<code>fig02_inflation.py</code>): from plant P3 to plant P4 the straight way is through the 0.20 m gap between bed 2 and the crate. The gap is 0.20 m wide against the rover’s 0.26 m across. Plan it three ways, then drive the path with the rover’s true disc and count the sample points (every 2.5 cm) at which the disc overlaps an obstacle:</p>
+<table>
+<caption>the same task planned with three inflations. A planner that ignores the body threads the gap and the robot, which cannot fit, would jam against its edges (prediction 2 of Section 2: it hits the edges). With the correct inflation the gap is closed in the planner’s eyes (the clearance on its midline is 0.10 m against the 0.175 m needed), and the route goes around bed 2’s left end, <strong>41.6% longer</strong> (6.771 against 4.781 m).</caption>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">inflation</th>
+<th style="text-align: right;">path length</th>
+<th style="text-align: right;">sample points in collision</th>
+<th style="text-align: left;">after line-of-sight smoothing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">none (point robot)</td>
+<td style="text-align: right;">4.781 m</td>
+<td style="text-align: right;">37 of 191</td>
+<td style="text-align: left;">4.555 m, 47 collisions</td>
+</tr>
+<tr>
+<td style="text-align: left;">0.10 m</td>
+<td style="text-align: right;">4.881 m</td>
+<td style="text-align: right;">37 of 195</td>
+<td style="text-align: left;">4.642 m, 41 collisions</td>
+</tr>
+<tr>
+<td style="text-align: left;">0.175 m</td>
+<td style="text-align: right;">6.771 m</td>
+<td style="text-align: right;"><strong>0 of 270</strong></td>
+<td style="text-align: left;">6.548 m, 0 collisions (124 waypoints to 5)</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="../assets/fig/u11/fig02_inflation.png" style="width:100.0%" alt="The path from plant P3 (green) to plant P4 (blue star) planned with no inflation (left), 0.10 m (middle) and 0.175 m (right). Orange crosses mark samples where the rover’s body circle (0.13 m) overlaps an obstacle; dark grey is the inflated margin. Only the 0.175 m plan is collision-free, and it detours around the end of bed 2." />
+<figcaption aria-hidden="true">The path from plant P3 (green) to plant P4 (blue star) planned with no inflation (left), 0.10 m (middle) and 0.175 m (right). Orange crosses mark samples where the rover’s body circle (0.13 m) overlaps an obstacle; dark grey is the inflated margin. Only the 0.175 m plan is collision-free, and it detours around the end of bed 2.</figcaption>
+</figure>
+<p>All four plants stay reachable up to an inflation of 0.30 m on this map: inflation closes the narrow gap but not the aisles.</p>
+<h4 id="path-smoothing-by-line-of-sight">3.3.2 Path smoothing by line of sight</h4>
+<p>A grid path is a staircase of 8 directions. The <strong>line-of-sight</strong> smoother starts at the first waypoint and jumps to the <em>farthest</em> later waypoint it can see along a straight line through free (inflated-map) cells, then repeats from there. The 159-waypoint path from the dock to P4 becomes <strong>4 waypoints</strong>, length 8.212 m (against 8.728 m for the grid path), and the result is still collision-free because the lines were tested on the inflated map. The smoothed path is shorter than the 8-direction grid path but is <em>not</em> optimal in general (it is only the best path that uses the grid path’s own waypoints).</p>
+<h4 id="weighted-a-and-inadmissible-heuristics">3.3.3 Weighted A* and inadmissible heuristics</h4>
+<p>Multiplying the heuristic by <span class="math inline">w\ge1</span>, <span class="math inline">f=g+wh</span>, makes A* greedier: it heads for the goal harder and expands fewer cells. For an admissible <span class="math inline">h</span> the path found costs at most <span class="math inline">w\,C^*</span> (stated, not proved here). Measured on dock to P4 (<code>fig03_log.txt</code>): <span class="math inline">w=1.2</span> to 2 give the <em>optimal</em> cost with 4926 down to 3031 expansions (46% fewer than 5627); <span class="math inline">w=3</span> costs 2.37% more with 3280; <span class="math inline">w=5</span> and 10 cost 6.64% more with 3682 and 4021. The bound <span class="math inline">w</span> is far from tight: at <span class="math inline">w=10</span> the loss is 6.6%, not 900%. A heuristic scaled by <span class="math inline">k</span> is the same thing: <span class="math inline">3\times</span> octile gives exactly the <span class="math inline">w=3</span> numbers (8.936 m, 3280). It is no longer admissible, so the optimality guarantee is lost; here the answer was still optimal for <span class="math inline">k=1.5</span>.</p>
+<h3 id="tier-4-hard-following-visiting-stopping-and-the-ros-2-graph">3.4 Tier 4 (hard): following, visiting, stopping, and the ROS 2 graph</h3>
+<h4 id="pure-pursuit">3.4.1 Pure pursuit</h4>
+<p>A path is a list of points; the rover needs commands. <strong>Pure pursuit</strong> picks the point on the path a distance <span class="math inline">L_d</span> ahead of the rover (the <strong>lookahead distance</strong>, the “carrot”) and steers along the circle that is tangent to the rover’s heading and passes through it. In the rover frame the target is at <span class="math inline">(x,y)</span> with <span class="math inline">L^2=x^2+y^2</span>; the circle through the origin tangent to the <span class="math inline">x</span>-axis has centre <span class="math inline">(0,R)</span>, so <span class="math inline">x^2+(y-R)^2=R^2\Rightarrow x^2+y^2=2Ry</span> and <span class="math display"> \kappa=\frac1R=\frac{2y}{L^2},\qquad\omega=v\kappa. \tag{3}</span> (Target at <span class="math inline">(0.3,\,0.1)</span> m: <span class="math inline">\kappa=0.2/0.1=2.0</span> m<span class="math inline">^{-1}</span>, <span class="math inline">\omega=1.0</span> rad/s at 0.5 m/s.)</p>
+<p><em>Error dynamics.</em> Follow a straight line <span class="math inline">y=0</span> with the rover at lateral offset <span class="math inline">e</span> and a small heading error <span class="math inline">\theta</span>, the target at <span class="math inline">(L_d,0)</span> along the line. In the rover frame its lateral position is <span class="math inline">y\approx-e-L_d\theta</span>, so <span class="math inline">\kappa\approx-2(e+L_d\theta)/L_d^2</span> and, with <span class="math inline">\dot e=v\theta</span> and <span class="math inline">\dot\theta=\omega=v\kappa</span>, <span class="math display"> \ddot e+\frac{2v}{L_d}\,\dot e+\frac{2v^2}{L_d^2}\,e=0,\qquad\omega_n=\frac{\sqrt2\,v}{L_d},\quad\zeta=\frac1{\sqrt2}. \tag{4}</span> This is the line follower of Unit 9 (<span class="math inline">\ddot y+k_2\dot y+vk_1y=0</span>) with <span class="math inline">k_1=2v/L_d^2</span> and <span class="math inline">k_2=2v/L_d</span>. The damping is <span class="math inline">0.707</span> whatever <span class="math inline">L_d</span> and <span class="math inline">v</span> are; the speed of the response is <span class="math inline">\omega_n</span>, a time constant <span class="math inline">L_d/v</span>. Unit 9’s delay-margin formula applied to these gains gives a margin of <span class="math inline">\approx1.257\,L_d/v</span>: for <span class="math inline">v=0.5</span> m/s, <strong>0.251 s at <span class="math inline">L_d=0.1</span> m, 0.503 s at 0.2 m, 1.005 s at 0.4 m and 3.02 s at 1.2 m</strong>. A short lookahead means a quick but fragile loop; a long one a slow but forgiving loop. On a corner the long carrot also <em>cuts the corner</em>, by an amount that the experiment below measures.</p>
+<p><em>The experiment</em> (<code>fig04_pursuit.py</code>): follow the smoothed dock-to-P4 path (4 waypoints, 8.212 m) at 0.5 m/s with the shared rover, the commanded turn rate passing through a 30 ms lag (the wheel loops of Unit 9). The distance from the path:</p>
+<table>
+<caption>pure-pursuit tracking of the planned path against lookahead. The maximum error (at the corners) grows almost linearly with <span class="math inline">L_d</span>; the time hardly changes. Our smoothed path hugs the inflated boundary, which leaves the rover’s body a margin of only 2 to 4.5 cm: once the corner cut exceeds that (from <span class="math inline">L_d=0.3</span> m) the body touches an obstacle. <strong>The inflation margin must exceed the corner cut.</strong></caption>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: right;">lookahead</th>
+<th style="text-align: right;">time</th>
+<th style="text-align: right;">maximum error</th>
+<th style="text-align: right;">rms error</th>
+<th style="text-align: right;">samples touching an obstacle</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">0.1 m</td>
+<td style="text-align: right;">17.20 s</td>
+<td style="text-align: right;">1.5 cm</td>
+<td style="text-align: right;">0.1 cm</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.2 m</td>
+<td style="text-align: right;">17.46 s</td>
+<td style="text-align: right;">3.2 cm</td>
+<td style="text-align: right;">0.3 cm</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.3 m</td>
+<td style="text-align: right;">17.46 s</td>
+<td style="text-align: right;">5.1 cm</td>
+<td style="text-align: right;">0.7 cm</td>
+<td style="text-align: right;">3</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.4 m</td>
+<td style="text-align: right;">17.42 s</td>
+<td style="text-align: right;">6.8 cm</td>
+<td style="text-align: right;">1.0 cm</td>
+<td style="text-align: right;">3</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.6 m</td>
+<td style="text-align: right;">17.38 s</td>
+<td style="text-align: right;">10.6 cm</td>
+<td style="text-align: right;">1.9 cm</td>
+<td style="text-align: right;">5</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.8 m</td>
+<td style="text-align: right;">17.32 s</td>
+<td style="text-align: right;">14.1 cm</td>
+<td style="text-align: right;">3.0 cm</td>
+<td style="text-align: right;">8</td>
+</tr>
+<tr>
+<td style="text-align: right;">1.2 m</td>
+<td style="text-align: right;">17.24 s</td>
+<td style="text-align: right;">21.4 cm</td>
+<td style="text-align: right;">5.2 cm</td>
+<td style="text-align: right;">11</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="../assets/fig/u11/fig04_pursuit.png" style="width:95.0%" alt="Left: the smoothed path (dashed) and the rover’s paths at lookahead 0.1, 0.4 and 1.2 m: the short lookahead hugs the corners, the long one cuts them. Right: maximum and rms distance from the path against lookahead." />
+<figcaption aria-hidden="true">Left: the smoothed path (dashed) and the rover’s paths at lookahead 0.1, 0.4 and 1.2 m: the short lookahead hugs the corners, the long one cuts them. Right: maximum and rms distance from the path against lookahead.</figcaption>
+</figure>
+<p>The lag matters through the delay margin: with <span class="math inline">L_d=0.1</span> m the maximum error is 1.5 cm with a 30 ms lag and 2.8 cm with a 200 ms lag (the margin is 0.25 s), while at <span class="math inline">L_d=0.4</span> m the same lags give 6.8 and 5.2 cm: with a delay near its margin a short carrot rings. The speed did not change the error much (7.1, 6.8 and 6.7 cm at 0.2, 0.5 and 0.65 m/s for <span class="math inline">L_d=0.4</span> m); the largest turn rate of the run (0.82 rad/s) is far below the 2.39 rad/s the wheels allow at 0.5 m/s.</p>
+<h4 id="in-what-order-to-visit-the-plants">3.4.2 In what order to visit the plants</h4>
+<p>With several dry plants the planner must also decide <em>which first</em>. We have the dock and four plants P1 to P4. Plan every pair with A* (the matrix of path lengths, in metres):</p>
+<table>
+<caption>shortest path lengths between the dock and the plants (A* on the inflated map, 8-connected). The greedy <strong>nearest-neighbour</strong> rule (always go to the closest unvisited plant) gives dock, P3, P1, P2, P4 for <strong>27.215 m</strong>; trying all <span class="math inline">4!=24</span> orders gives dock, P1, P2, P3, P4 for <strong>22.696 m</strong>; the worst order is 39.011 m. The greedy order is 19.9% longer than the best; the worst is 71.9% longer. For 4 plants brute force is trivial; the number of orders grows as <span class="math inline">n!</span> (10 plants: 3.6 million), which is why the problem (the travelling salesman problem) needs heuristics or dynamic programming beyond about a dozen goals (named, not taught).</caption>
+<thead>
+<tr>
+<th style="text-align: left;">from \ to</th>
+<th style="text-align: right;">dock</th>
+<th style="text-align: right;">P1</th>
+<th style="text-align: right;">P2</th>
+<th style="text-align: right;">P3</th>
+<th style="text-align: right;">P4</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">dock</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">4.59</td>
+<td style="text-align: right;">9.66</td>
+<td style="text-align: right;">3.51</td>
+<td style="text-align: right;">8.73</td>
+</tr>
+<tr>
+<td style="text-align: left;">P1</td>
+<td style="text-align: right;">4.59</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">5.18</td>
+<td style="text-align: right;">5.61</td>
+<td style="text-align: right;">10.83</td>
+</tr>
+<tr>
+<td style="text-align: left;">P2</td>
+<td style="text-align: right;">9.66</td>
+<td style="text-align: right;">5.18</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">6.15</td>
+<td style="text-align: right;">12.92</td>
+</tr>
+<tr>
+<td style="text-align: left;">P3</td>
+<td style="text-align: right;">3.51</td>
+<td style="text-align: right;">5.61</td>
+<td style="text-align: right;">6.15</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">6.77</td>
+</tr>
+<tr>
+<td style="text-align: left;">P4</td>
+<td style="text-align: right;">8.73</td>
+<td style="text-align: right;">10.83</td>
+<td style="text-align: right;">12.92</td>
+<td style="text-align: right;">6.77</td>
+<td style="text-align: right;">0</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="../assets/fig/u11/fig03_weights_visit.png" style="width:95.0%" alt="Left: weighted A* on the dock-to-P4 task: the path cost relative to the optimum (blue) stays at or below 1.07 for weights up to 10 while the guaranteed bound is w (red dotted); the number of expanded cells (orange) falls from 5627 to about 3000 to 4000. Right: the routes through the four dry plants: nearest neighbour (orange, 27.2 m) and the best of 24 orders (blue, 22.7 m)." />
+<figcaption aria-hidden="true">Left: weighted A* on the dock-to-P4 task: the path cost relative to the optimum (blue) stays at or below 1.07 for weights up to 10 while the guaranteed bound is <span class="math inline">w</span> (red dotted); the number of expanded cells (orange) falls from 5627 to about 3000 to 4000. Right: the routes through the four dry plants: nearest neighbour (orange, 27.2 m) and the best of 24 orders (blue, 22.7 m).</figcaption>
+</figure>
+<h4 id="stopping-budgets-closing-r3-and-s1">3.4.3 Stopping budgets: closing R3 and S1</h4>
+<p>Unit 9 found that the rover brakes at the traction limit <span class="math inline">\mu g</span> (<span class="math inline">\mu=0.6</span> assumed): braking distance <span class="math inline">v^2/2\mu g=2.124</span> cm from 0.5 m/s, and a total stopping distance <span class="math inline">v\,t_{\text{lat}}+v^2/2\mu g</span>. Requirement R3 (stopping distance under 5 cm) therefore needs <span class="math inline">t_{\text{lat}}\le57.5</span> ms. Where does the latency come from? The edge loop (15 ms, Unit 1) plus the <em>waiting for the next sensor reading</em>. An ultrasonic sensor pings every <span class="math inline">T_{\text{ping}}</span>; an obstacle that appears just after a ping is seen up to one period late, so the worst-case latency is <span class="math inline">T_{\text{ping}}+15</span> ms: <span class="math display"> s_{\text{stop}}=v\,(T_{\text{ping}}+t_{\text{edge}})+\frac{v^2}{2\mu g}\le5\ \text{cm}\quad\Longrightarrow\quad T_{\text{ping}}\le\frac{s_{\text{lim}}-v^2/2\mu g}{v}-t_{\text{edge}}=42.5\ \text{ms}\ (23.5\ \text{Hz}). \tag{5}</span> A simulated worst case agrees with the formula to 0.1 cm at every period tried (3.36 against 3.37 cm at 10 ms; 5.86 against 5.87 at 60 ms; <code>fig05_log.txt</code>). <strong>A sensor that pings every 60 ms</strong> (a common minimum cycle for the cheap ultrasonic module; from memory, not checked) <strong>gives 5.87 cm: it misses the 5 cm target</strong> (prediction 3 of Section 2: no), and meets a 10 cm target up to <span class="math inline">T_{\text{ping}}=142.5</span> ms. The echo from a target at 4 m takes 23.3 ms, so pinging faster than that is not possible at full range; 42.5 ms is feasible, and 1.5 m (8.7 ms) is easy.</p>
+<p>How fast <em>could</em> the rover go, if only sensing range mattered? The largest speed with <span class="math inline">v\,t+v^2/2\mu g\le</span> the free distance: for 1.45 m free, 4.0, 3.7 and 3.3 m/s for latencies 15, 75 and 150 ms; for 0.25 m free (an obstacle first seen at 0.30 m) 1.6, 1.3 and 1.05 m/s: all above the rover’s 0.69 m/s limit. So <em>the speed limit comes from the motors, not the sensors</em>; the sensing rate matters for the <em>stopping distance</em>, and the sensing range does not limit the rover at its 0.5 m/s.</p>
+<p><strong>Link loss (S1).</strong> If commands stop arriving (the link is lost, Unit 7), the rover should stop by itself. A <strong>watchdog</strong> stops the rover when no valid command has arrived for a <strong>timeout</strong> <span class="math inline">t_o</span>; the rover then travels <span class="math inline">v(t_o+t_{\text{edge}})+v^2/2\mu g</span> after the last good command:</p>
+<table style="width:100%;">
+<caption>distance travelled after the last good command with a command timeout. The timeout must be longer than the normal gap between commands (the edge loop sends one every 10 ms, so 50 ms tolerates a few lost ones) and short enough to stop within the free space ahead: <strong>0.2 s</strong> is a sensible choice (12.9 cm).</caption>
+<colgroup>
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">timeout</th>
+<th style="text-align: right;">0.05 s</th>
+<th style="text-align: right;">0.1 s</th>
+<th style="text-align: right;">0.2 s</th>
+<th style="text-align: right;">0.5 s</th>
+<th style="text-align: right;">1.0 s</th>
+<th style="text-align: right;">2.0 s</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">distance at 0.5 m/s</td>
+<td style="text-align: right;">5.4 cm</td>
+<td style="text-align: right;">7.9 cm</td>
+<td style="text-align: right;">12.9 cm</td>
+<td style="text-align: right;">27.9 cm</td>
+<td style="text-align: right;">52.9 cm</td>
+<td style="text-align: right;">102.9 cm</td>
+</tr>
+<tr>
+<td style="text-align: left;">distance at 0.25 m/s</td>
+<td style="text-align: right;">2.2 cm</td>
+<td style="text-align: right;">3.4 cm</td>
+<td style="text-align: right;">5.9 cm</td>
+<td style="text-align: right;">13.4 cm</td>
+<td style="text-align: right;">25.9 cm</td>
+<td style="text-align: right;">50.9 cm</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="../assets/fig/u11/fig05_stop_budget.png" style="width:95.0%" alt="Left: the worst-case stopping distance from 0.5 m/s against the ultrasonic ping period (latency = ping period + 15 ms edge loop; braking at \mu g): a 5 cm stop needs a ping at least every 42.5 ms (23.5 Hz); a 60 ms ping gives 5.87 cm and a 25 ms ping 4.12 cm. Right: distance travelled after the last good command with a command timeout, for 0.5 and 0.25 m/s; dotted lines at 10 and 25 cm." />
+<figcaption aria-hidden="true">Left: the worst-case stopping distance from 0.5 m/s against the ultrasonic ping period (latency = ping period + 15 ms edge loop; braking at <span class="math inline">\mu g</span>): a 5 cm stop needs a ping at least every 42.5 ms (23.5 Hz); a 60 ms ping gives 5.87 cm and a 25 ms ping 4.12 cm. Right: distance travelled after the last good command with a command timeout, for 0.5 and 0.25 m/s; dotted lines at 10 and 25 cm.</figcaption>
+</figure>
+<h4 id="the-rover-as-a-ros-2-graph">3.4.4 The rover as a ROS 2 graph</h4>
+<p>The pieces above (estimator, planner, controller, drivers) run as separate programs that must exchange data, and <strong>ROS 2</strong> is the common framework for that. We use only the vocabulary here, and the definitions below were read in the ROS 2 documentation (Jazzy). A <strong>node</strong> is a participant in the ROS 2 graph, which uses a client library to communicate with other nodes; nodes may be in the same process, in different processes or on different machines. A <strong>topic</strong> is a named, strongly-typed, anonymous publish-subscribe channel for continuous data streams (a range every 40 ms, the pose, the velocity command). A <strong>service</strong> is a remote procedure call (the controller asks the planner for a path to a goal and waits for the answer); an <strong>action</strong> is a long-running remote procedure call <em>with feedback and the ability to cancel</em> (“go to P4”: progress is reported and the goal can be abandoned). A <strong>launch file</strong> starts and configures many nodes together. The <strong>tf</strong> (transform) library keeps a tree of coordinate frames: the tutorial’s own demo has a world frame and two turtle frames, with a broadcaster publishing frames and a listener computing the difference between them.</p>
+<p><em>The rover’s graph</em> (Figure 6, left): <code>range_driver</code> publishes <code>/range</code>; <code>wheel_driver</code> publishes <code>/odom</code>; the <code>estimator</code> (Unit 10) turns them into <code>/pose</code>; the <code>planner</code> answers a <code>/plan</code> service and publishes <code>/path</code>; the <code>controller</code> (pure pursuit, Unit 9 loops) subscribes to <code>/pose</code> and <code>/path</code> and publishes <code>/cmd_vel</code>; the <code>motor_driver</code> subscribes to it. The rover’s frames form the tree map, odom, base_link, range_sensor: <em>tf</em> composes the transforms of Unit 8 (SE(2)) so that the point seen by the range sensor can be expressed in the map. Our miniature <code>TFTree</code> does this with the matrices of Unit 8: with map to odom at <span class="math inline">(0.12,\,-0.05,\,0.02\ \text{rad})</span>, odom to base_link at <span class="math inline">(3.0,\,1.5,\,90^\circ)</span> and base_link to the sensor at <span class="math inline">(0.10,\,0,\,90^\circ)</span>, the sensor’s pose in the map is <span class="math inline">x=3.087</span> m, <span class="math inline">y=1.610</span> m, heading <span class="math inline">-178.9^\circ</span>, and the inverse lookup composes with it to the identity matrix. The miniature <code>Bus</code> carries typed messages between plain Python callables: the run publishes a range, the estimator stub publishes a pose, the planner service returns a path, and <code>/cmd_vel</code> follows (the logged flow is <code>/range</code>, <code>/pose</code>, <code>/path</code>, <code>/cmd_vel</code>), and a wrong message type on a typed topic raises an error. <strong>It only imitates the ideas: no ROS 2 code was run, and the real system adds discovery, quality-of-service settings and real-time scheduling that are not modelled.</strong></p>
+<figure>
+<img src="../assets/fig/u11/fig06_graph.png" style="width:95.0%" alt="Left: the rover as a graph of nodes (blue boxes), topics (black arrows) and a service (red): range and odometry drivers feed the estimator, the estimator and the planner feed the controller, the controller drives the motors. Right: the tf tree of frames. Both are run on the miniature bus of planning_np; ROS 2 itself was not run." />
+<figcaption aria-hidden="true">Left: the rover as a graph of nodes (blue boxes), topics (black arrows) and a service (red): range and odometry drivers feed the estimator, the estimator and the planner feed the controller, the controller drives the motors. Right: the tf tree of frames. Both are run on the miniature bus of <code>planning_np</code>; ROS 2 itself was not run.</figcaption>
+</figure>
+<h3 id="tier-5-hardest-open-questions">3.5 Tier 5 (hardest): open questions</h3>
+<ol type="1">
+<li><strong>Consistency of A* on a grid.</strong> The octile distance is exact on an empty 8-connected grid. Show it is consistent, and find a <em>non-uniform cost</em> map (for example a floor that slows the rover) for which it stays admissible but A* then expands almost as much as Dijkstra. What heuristic would help?</li>
+<li><strong>Planning for a non-round robot.</strong> The rover is not a circle. How would you plan for a rectangle that must also turn, and what does the configuration space look like when heading is a third dimension?</li>
+<li><strong>Replanning in a changing world.</strong> A person steps into the aisle after the plan is made. Compare replanning from scratch with an incremental method (named: D* Lite) in the number of cells touched, and decide how often to replan given the 17 s a route takes.</li>
+</ol>
+<h2 id="apply">4. Apply</h2>
+<h3 id="worked-problems">4.1 Worked problems</h3>
+<p><strong>Problem 1 (heuristics).</strong> On an 8-connected grid a goal is 7 cells right and 2 cells up. Give the octile, Euclidean and Manhattan estimates and say which are admissible.</p>
+<p><em>Solution.</em> Octile: <span class="math inline">9+(\sqrt2-2)\times2=9-1.172=7.828</span>. Euclidean: <span class="math inline">\sqrt{53}=7.280</span>. Manhattan: <span class="math inline">9</span>. The true cost in an empty field is the octile value, 7.828: octile and Euclidean never exceed it (admissible); Manhattan overestimates (inadmissible).</p>
+<p><strong>Problem 2 (inflation).</strong> A rover fits in a circle of 0.15 m on a 10 cm grid; a margin of 3 cm is wanted. What inflation radius? What is the narrowest gap (between obstacle faces) that can remain open?</p>
+<p><em>Solution.</em> <span class="math inline">r_{\text{inf}}=0.15+0.05+0.03=0.23</span> m. Open only if the centre of the gap is more than 0.23 m from both obstacle cell centres, i.e. a centre-to-centre distance over 0.46 m, a face-to-face gap over <span class="math inline">0.46-0.10=0.36</span> m.</p>
+<p><strong>Problem 3 (pure pursuit).</strong> The rover is at the origin heading along <span class="math inline">+x</span>; the target is at <span class="math inline">(0.4,\,-0.2)</span> m. Give <span class="math inline">\kappa</span> and <span class="math inline">\omega</span> at 0.5 m/s, and the damping of the loop.</p>
+<p><em>Solution.</em> <span class="math inline">\kappa=2(-0.2)/(0.16+0.04)=-2.0</span> m<span class="math inline">^{-1}</span> (turn right), <span class="math inline">\omega=-1.0</span> rad/s; the loop’s damping is <span class="math inline">0.707</span> for any <span class="math inline">L_d</span> and <span class="math inline">v</span>.</p>
+<p><strong>Problem 4 (sensor rate).</strong> The ultrasonic sensor pings every 50 ms; the edge loop takes 15 ms. What is the worst-case stopping distance from 0.5 m/s (<span class="math inline">\mu=0.6</span>)? Does it meet 5 cm?</p>
+<p><em>Solution.</em> <span class="math inline">0.5\times0.065+0.25/(2\times5.886)=3.25+2.12=5.37</span> cm: no; a 5 cm stop needs <span class="math inline">T_{\text{ping}}\le42.5</span> ms.</p>
+<p><strong>Problem 5 (visiting order).</strong> Dock to A 2 m, A to B 3 m, dock to B 6 m, B to C 1 m, dock to C 5 m, A to C 4 m. Find the best order of A, B, C.</p>
+<p><em>Solution.</em> Orders: A B C: <span class="math inline">2+3+1=6</span>; A C B: <span class="math inline">2+4+1=7</span>; B A C: <span class="math inline">6+3+4=13</span>; B C A: <span class="math inline">6+1+4=11</span>; C A B: <span class="math inline">5+4+3=12</span>; C B A: <span class="math inline">5+1+3=9</span>. Best A, B, C with 6 m; nearest neighbour (A, then B at 3 against C at 4, then C) finds it here.</p>
+<h3 id="code-and-figures">4.2 Code and figures</h3>
+<pre class="python"><code>import planning_np as P
+
+occ = ...                                              # boolean occupancy grid, 5 cm cells
+infl = P.inflate(occ, 0.175, 0.05)                      # rover radius + half a cell + margin
+r = P.astar(infl, (11, 11), (100, 120))                 # dict: path, cost (cells), expanded
+print(r[&quot;cost&quot;] * 0.05, r[&quot;expanded&quot;])                  # 8.728 m, 5627
+sm = P.shortcut(infl, r[&quot;path&quot;])                        # line-of-sight smoothing: 159 -&gt; 4 waypoints
+xy = [P.cell_center(c, 0.05) for c in sm]
+run = P.follow_path(xy, lookahead=0.2, v_nominal=0.5)   # pure pursuit on the shared rover
+print(run[&quot;max_xte&quot;], run[&quot;finished&quot;])
+print(P.max_ping_period(0.5, 0.05, 0.015))              # 0.0425 s
+print(P.watchdog_stop_distance(0.5, 0.2))               # 0.129 m</code></pre>
+<p>The module and README are in <code>codes/robotics/planning_np/</code>. Its eight tests check: A* and Dijkstra against networkx on random grids (and agreement on “no path”); the weighted-A* bound and an inadmissible heuristic; BFS against the unweighted shortest-path count; no corner cutting; inflation and the disc collision test; pure pursuit on a line and on a circle; the stopping, ping and watchdog formulas against a time-stepping simulation; the visiting order, the tf tree (including the inverse lookup) and the typed bus.</p>
+<p><em>What would look different if the theory were wrong?</em> If the octile heuristic were inadmissible A* would sometimes return a path longer than Dijkstra’s (never seen in the tests); if (4) were wrong the damping would depend on <span class="math inline">L_d</span> (the closed-form delay margins scale with <span class="math inline">L_d/v</span> and the sim’s errors scale as predicted); if (5) were wrong the simulated worst case would not follow it (it agrees to 0.1 cm).</p>
+<h2 id="analyze">5. Analyze</h2>
+<p><strong>Limits.</strong> As <span class="math inline">w\to\infty</span> weighted A* becomes greedy best-first search (fast, with no bound; the measured loss was 6.6% at <span class="math inline">w=10</span> here, but the bound is useless). As <span class="math inline">L_d\to0</span> pure pursuit hugs the path but its delay margin <span class="math inline">1.257\,L_d/v\to0</span>; as <span class="math inline">L_d\to\infty</span> the margin grows but the corner cut grows with it. As the inflation grows the free space and the number of reachable goals fall.</p>
+<p><strong>Dominance.</strong> In the stopping budget the braking distance (2.12 cm) dominates for <span class="math inline">T_{\text{ping}}</span> below 27.5 ms (where <span class="math inline">0.5(T+0.015)=2.12</span> cm) and reaction dominates above: at 60 ms, 3.75 of 5.87 cm (64%) is reaction. In the planner the cost of a search is the <em>number of expanded cells</em>, not the path length.</p>
+<p><strong>Order-of-magnitude estimate.</strong> A* on an open map expands about the cells inside an ellipse around the straight line to the goal; for a goal 12 m away on 5 cm cells, a corridor 1 m wide is <span class="math inline">240\times20=4800</span> cells: the measured 5627 is of that order.</p>
+<p><strong>Sensitivity.</strong> The route length reacts to inflation in steps, not smoothly: 4.78 m (no inflation), 4.88 m (0.10 m), then 6.77 m at 0.175 m when the gap closes. The tracking error is linear in <span class="math inline">L_d</span> (1.5 cm at 0.1 m to 21.4 cm at 1.2 m).</p>
+<p><strong>Failure modes.</strong> (1) <em>Planning a point through a gap the body does not fit</em> (collisions). (2) <em>Inflation rounding on a square grid</em> (too small by half a cell). (3) <em>A corner cut larger than the safety margin</em> (pure pursuit with a long lookahead). (4) <em>Lookahead too short for the loop delay</em> (ringing). (5) <em>A sensor that looks too rarely</em> (the stop budget). (6) <em>No watchdog</em> (a rover that keeps driving after the link drops). (7) <em>An inadmissible heuristic presented as optimal.</em> (8) <em>Greedy visiting order</em> (20% longer here).</p>
+<p><strong>Items used from the pedagogy checklist:</strong> limits, dominance, estimate, sensitivity, failure modes, convergence (the weights), invariants (A* and Dijkstra agree with networkx; the worst-case simulation follows the closed form), residual (the half-cell inflation error caught by the disc test), uncertainty (150 random pairs for BFS), and a priori versus a posteriori (the ping budget and the delay margins were computed before they were simulated).</p>
+<h2 id="evaluate">6. Evaluate</h2>
+<p><strong>Which planner?</strong> BFS when all moves cost the same; Dijkstra when there is no good heuristic or many goals; A* with an admissible heuristic as the default; weighted A* when time matters and a few percent of extra length does not (here w up to 2 lost nothing and saved 46% of the expansions). <strong>Grid or sampling-based?</strong> A grid is simple, exact to its resolution and fine for a 2-D rover; its memory and time explode in many dimensions (an arm with six joints), where sampling-based planners (probabilistic roadmaps and rapidly exploring random trees, named only) are used.</p>
+<p><strong>Pure pursuit versus a controller on the cross-track error.</strong> Pure pursuit has one parameter, a fixed damping of 0.707 and works on any polyline, at the cost of cutting corners; the Unit 9 law with chosen <span class="math inline">k_1,k_2</span> lets damping and speed vary independently. <strong>Planning on the edge or in the cloud?</strong> The planner can be slow (tens of milliseconds, replanned every few seconds) and could live off the rover; the controller, the watchdog and the stop must run on the rover (Section 3.4.3). <strong>Simulators.</strong> Gazebo and Webots are physics simulators with sensor models that run ROS 2 nodes unchanged; they were not used here (they are not installed, and the course’s own simulator has a known, small physics); in practice they are how a navigation stack is tested before a real floor.</p>
+<p><strong>Context.</strong> A* is attributed to Hart, Nilsson and Raphael (1968), and Dijkstra’s algorithm to Dijkstra (1959); both attributions are from memory, the papers were not read. ROS 2’s navigation stack (named: Nav2) packages these ideas (maps, costmaps with inflation, planners, controllers such as pure-pursuit variants, behaviour trees); that is stated from general knowledge, not checked here. <strong>When NOT to use these methods:</strong> in a world that changes faster than the planner (use reactive avoidance and replan locally), for robots with strong motion constraints (cars: plan with their turning radius), or for tasks where the map is wrong (re-localise).</p>
+<p><strong>Honesty about this Unit’s numbers.</strong> The greenhouse (beds, crate, plants), the 0.13 m body circle, the 2 cm margin, <span class="math inline">\mu=0.6</span>, the 15 ms edge loop and the ping periods are assumed. The pure-pursuit runs use the simulated rover with a 30 ms lag standing in for the Unit 9 wheel loops, not <code>DynamicRover</code>. The planning times were not benchmarked reliably. The ROS 2 graph is a sketch run on a toy bus.</p>
+<h2 id="create">7. Create</h2>
+<div class="create" title="What you can build from this">
+<ol type="1">
+<li><strong>Smarter inflation.</strong> Replace the single inflation by a <em>cost</em> that rises smoothly toward obstacles (a costmap) and compare the paths with the hard inflation: do they keep a larger margin where the aisle is wide?</li>
+<li><strong>Make the lookahead adapt.</strong> Set <span class="math inline">L_d=\max(0.15,\,0.4v)</span> and check the error at 0.2 and 0.65 m/s; add a rule that slows before sharp corners.</li>
+<li><strong>Replan around a person.</strong> Block the aisle after the first 5 s, replan from the rover’s pose, and measure the extra distance and the time to replan.</li>
+<li><strong>A real order.</strong> Add 8 plants and compare nearest neighbour, nearest neighbour plus 2-opt swaps, and brute force on 8 (40320 orders).</li>
+<li><strong>Could become a package module:</strong> <code>iotrobotics.planning</code> with the planners, the inflation, the path follower and the budgets, reused by the Unit 12 capstone.</li>
+</ol>
+</div>
+<p><strong>Running project, Layer 10: planning and navigation.</strong> The rover plans on the inflated occupancy grid and follows the path with pure pursuit. Updated requirements:</p>
+<table>
+<caption>running-project requirements updated by Unit 11. The success rate, the energy used and the message latency of the whole system are measured in Unit 12.</caption>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">id</th>
+<th style="text-align: left;">requirement</th>
+<th style="text-align: left;">status after Unit 11</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">R3</td>
+<td style="text-align: left;">the rover stops before an obstacle (stopping distance under 5 cm)</td>
+<td style="text-align: left;"><strong>closed with a condition</strong>: needs the ultrasonic ping at most every 42.5 ms (23.5 Hz); a 60 ms ping gives 5.87 cm (fails 5 cm; meets 10 cm up to 142.5 ms)</td>
+</tr>
+<tr>
+<td style="text-align: left;">S1</td>
+<td style="text-align: left;">safe state when the link is lost</td>
+<td style="text-align: left;"><strong>closed</strong>: a command timeout of 0.2 s stops the rover within 12.9 cm at 0.5 m/s (5.9 cm at 0.25 m/s)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R39 (new)</td>
+<td style="text-align: left;">a path from the dock to any dry plant</td>
+<td style="text-align: left;">met: 8.728 m to P4 with A* (5627 cells expanded); all four plants reachable up to 0.30 m inflation</td>
+</tr>
+<tr>
+<td style="text-align: left;">R40 (new)</td>
+<td style="text-align: left;">no collisions with the real body</td>
+<td style="text-align: left;">met with inflation 0.175 m and lookahead at most 0.2 m (0 collisions; 3 at 0.3 m); a point-robot plan collides at 37 of 191 samples</td>
+</tr>
+<tr>
+<td style="text-align: left;">R41 (new)</td>
+<td style="text-align: left;">visiting four plants with the least travel</td>
+<td style="text-align: left;">best order 22.7 m; nearest neighbour 27.2 m (19.9% more)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R42 (new)</td>
+<td style="text-align: left;">path-following error under the safety margin</td>
+<td style="text-align: left;">3.2 cm at <span class="math inline">L_d=0.2</span> m against a margin of 2 to 4.5 cm</td>
+</tr>
+</tbody>
+</table>
+<h2 id="visualization-lesson">8. Visualization lesson</h2>
+<table>
+<caption>the chart types of this Unit. Ladder: <em>remember</em> the names; <em>understand</em> what each shows; <em>apply</em> the call; <em>analyse</em> how it misleads; <em>evaluate</em> when a table is better (the four-plant distance matrix); <em>create</em> a new one (a map coloured by cost-to-go).</caption>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Chart type</th>
+<th style="text-align: left;">Best for</th>
+<th style="text-align: left;">How it misleads</th>
+<th style="text-align: left;">matplotlib call</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">map overlay of a path on a grey-scale grid (with the expanded cells shaded)</td>
+<td style="text-align: left;">what a planner did and how much it searched</td>
+<td style="text-align: left;">the picture of the path hides the number of cells expanded; print both</td>
+<td style="text-align: left;"><code>ax.imshow(img, origin="lower")</code>, <code>ax.plot(x, y)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">side-by-side panels with the same axes</td>
+<td style="text-align: left;">comparing methods or parameters</td>
+<td style="text-align: left;">different colour or axis scales between panels; keep them equal</td>
+<td style="text-align: left;"><code>plt.subplots(1, 3, sharey=True)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">twin axes: cost and effort against a parameter</td>
+<td style="text-align: left;">a trade-off (weight against cost and expansions)</td>
+<td style="text-align: left;">two y axes invite false comparisons; label the colours</td>
+<td style="text-align: left;"><code>ax.twinx()</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">error against a design parameter with markers</td>
+<td style="text-align: left;">choosing a value (lookahead)</td>
+<td style="text-align: left;">the maximum and the rms differ by a factor 5 to 10; show both</td>
+<td style="text-align: left;"><code>ax.plot(Ld, e_max)</code>, <code>ax.plot(Ld, e_rms)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">budget curve with a threshold line</td>
+<td style="text-align: left;">a requirement as a limit on a parameter (ping period)</td>
+<td style="text-align: left;">exact only for the stated friction and latency</td>
+<td style="text-align: left;"><code>ax.plot(T, s)</code>, <code>ax.axhline(5)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">node-and-arrow diagram</td>
+<td style="text-align: left;">a software architecture</td>
+<td style="text-align: left;">looks complete when only the nominal flow is drawn; add the failure paths</td>
+<td style="text-align: left;"><code>FancyBboxPatch</code>, <code>ax.annotate</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">table of a distance matrix</td>
+<td style="text-align: left;">the inputs of a combinatorial choice</td>
+<td style="text-align: left;">too many rows; use only for a handful of items</td>
+<td style="text-align: left;">(a Markdown table)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading Figure 1 as a chart.</strong> The shaded area is the real result: both BFS and Dijkstra open nearly the whole left of the map, while A* opens a band. A bar chart of the path lengths (all 8.73 m) would have shown the three planners as equal.</p>
+<h2 id="problem-set">9. Problem set</h2>
+<div class="exercise" title="Graded exercises">
+<ol type="1">
+<li>(easy) A grid path has 20 side moves and 12 diagonal moves. What is its length on a map with 5 cm cells? How many steps does BFS count?</li>
+<li>(medium) A rover is a circle of radius 0.2 m on a 5 cm grid; choose a 3 cm margin. Compute the inflation radius and the smallest passable face-to-face gap.</li>
+<li>(medium-hard) With <span class="math inline">L_d=0.3</span> m and <span class="math inline">v=0.4</span> m/s give <span class="math inline">\omega_n</span>, <span class="math inline">\zeta</span>, the time constant <span class="math inline">L_d/v</span> and the delay margin <span class="math inline">1.257\,L_d/v</span>.</li>
+<li>(hard) Show that the octile distance is consistent: for a move to a neighbour <span class="math inline">n&#39;</span> of <span class="math inline">n</span> (side or diagonal) show <span class="math inline">h(n)\le c(n,n&#39;)+h(n&#39;)</span>. (Consider the cases <span class="math inline">\Delta_1\ge\Delta_2</span> and the three kinds of move.)</li>
+<li>(hardest) The rover must stop within 4 cm from 0.5 m/s with <span class="math inline">\mu=0.5</span> and an edge loop of 15 ms. Find the largest ping period. Then decide whether the requirement is feasible if the echo from the farthest target (3 m) takes <span class="math inline">2\times3/343</span> s.</li>
+</ol>
+</div>
+<h2 id="retrieval-practice-and-recap">10. Retrieval practice and recap</h2>
+<p><strong>Answers to the Section 2 predictions.</strong></p>
+<ol type="1">
+<li>About 6000 (5627): A* opens a band toward the goal.</li>
+<li>It hits the edges of the gap: the plan says the gap is open, the body does not fit (37 of 191 sample points in collision).</li>
+<li>No: 5.87 cm at a 60 ms ping, against the 5 cm target; a ping at least every 42.5 ms is needed.</li>
+</ol>
+<p><strong>Answers to the Section 2 recall quiz.</strong></p>
+<ol type="1">
+<li>BFS the fewest steps; Dijkstra (and A*) the path of least cost.</li>
+<li>That the first path A* finds to the goal is optimal (with a consistent heuristic each cell is also expanded at most once).</li>
+<li>The obstacle is a square whose face lies half a cell nearer than its centre, so the radius alone leaves a gap smaller than the robot; the margin covers the rest.</li>
+<li>Responsiveness against smoothness: a short lookahead tracks the path closely but has a small delay margin and can ring; a long one is calm but cuts corners.</li>
+<li>A topic is a continuous publish-subscribe stream; a service is a request that waits for a reply (an action adds feedback and cancel).</li>
+</ol>
+<p><strong>Explain it to a friend.</strong></p>
+<ul>
+<li>Why does A* look at fewer squares than Dijkstra and still find the shortest path?</li>
+<li>Why is a plan made for a point not safe for the real rover?</li>
+<li>Why does the sensor’s ping rate decide how close a robot stops?</li>
+</ul>
+<p><strong>Re-derive by hand tomorrow, without looking:</strong> (a) why <span class="math inline">\kappa=2y/L^2</span>; (b) the pure-pursuit error equation <span class="math inline">\ddot e+(2v/L_d)\dot e+(2v^2/L_d^2)e=0</span>; (c) the ping-period budget <span class="math inline">T_{\text{ping}}\le(s_{\text{lim}}-v^2/2\mu g)/v-t_{\text{edge}}</span>.</p>
+<h2 id="where-next">11. Where next</h2>
+<ul>
+<li><strong>Unit 12</strong> is the capstone: the whole rover (sensing, networking, security, estimation, planning and control) is run as one system against a baseline, measuring task success, coverage, energy, latency and message loss, with ten alternative capstone briefs.</li>
+<li>Terms named here but not taught: sampling-based planning, D* Lite, costmaps, Nav2, Gazebo and Webots. They are registered in CURRICULUM.md.</li>
+<li><strong>Open threads:</strong> Hart (1968) and Dijkstra (1959) were not read; ROS 2 was not run; the greenhouse, body circle, margin, friction and ping period are assumed; the pure-pursuit runs used a simple lag instead of the full wheel loops; the 60 ms ultrasonic cycle is from memory.</li>
+</ul>
+<p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u10.html">&larr; Perception</a><a class="btn" href="u12.html">Capstone &rarr;</a></p></article></div></main>
 <footer><div class="wrap">Internet of Things and Robotics crash course · Code is MIT-licensed; PDFs are for study use. Companion to the <a href="../../index.html">Generative AI and LLMs course</a>.</div></footer>
 <script>
 document.getElementById('theme').onclick=function(){var d=document.documentElement,c=d.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'),n=c==='dark'?'light':'dark';d.dataset.theme=n;try{localStorage.setItem('theme',n)}catch(e){}};

@@ -1,15 +1,841 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Unit 12: Capstone: the Smart Greenhouse Rover · IoT and Robotics</title>
+<title>Unit 12: Capstone: The Smart Greenhouse Rover as One System · IoT and Robotics</title>
 <meta name="description" content="From volts and sensors to MQTT, security, kinematics, control, localisation and navigation, built around one running project: a Smart Greenhouse Rover. Twelve units with a PDF and runnable code each, a 14-lab track and an assessment bank. Built for a B.Tech student; simulation-first, no hardware needed.">
 <link rel="stylesheet" href="../../assets/css/style.css"><link rel="stylesheet" href="../assets/css/iot.css">
 <script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 <link rel="stylesheet" href="../../assets/vendor/katex/katex.min.css"></head><body>
 <header class="site-head"><div class="wrap">
 <a class="brand" href="../index.html">IoT <span>&amp;</span> Robotics<span class="long"> crash course</span></a>
-<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
+<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../playground/index.html">Playground</a><a href="../labs.html">Labs</a><a href="../assessment.html">Assessment</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
 </div></header>
-<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 12</strong><a href="#topics">Syllabus topics</a></aside><article class="doc"><p><span class="chip">Unit 12</span> <span class="chip soon">in preparation</span></p><h1>Capstone: the Smart Greenhouse Rover</h1><p class="lede">Every layer in one system test: success rate, energy, latency, loss and the report.</p><p class="box warn">Notes and code for this unit are being written. The topics below are the syllabus.</p><h2 id="topics">Syllabus topics</h2><ul><li>Integrate all layers</li><li>System-level metrics against the requirements</li><li>Comparison with a baseline</li><li>Ten alternative capstone briefs</li></ul><p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u11.html">&larr; Planning, ROS</a><span></span></p></article></div></main>
+<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 12</strong><a href="#session-map">Session map</a><a href="#terms-the-term-tree">1. Terms: the term tree</a><a href="#remember">2. Remember</a><a href="#understand-the-system">3. Understand: the system</a><a href="#apply">4. Apply</a><a href="#analyze">5. Analyze</a><a href="#evaluate">6. Evaluate</a><a href="#create">7. Create</a><a href="#visualization-lesson">8. Visualization lesson</a><a href="#problem-set">9. Problem set</a><a href="#retrieval-practice-and-recap">10. Retrieval practice and recap</a><a href="#where-next">11. Where next</a></aside><article class="doc"><p><span class="chip">Unit 12</span> <span class="chip ">ready</span></p><h1>Capstone: The Smart Greenhouse Rover as One System</h1><p class="lede">Every layer in one system test: success rate, energy, latency, loss and the report.</p><div class="dl"><a class="btn primary" href="../downloads/u12/u12-notes.pdf" download>PDF notes<small>900 KB</small></a><a class="btn" href="../downloads/u12/u12-notes.docx" download>Word (.docx)<small>706 KB</small></a><a class="btn" href="../downloads/u12/u12-code.zip" download>All code (.zip)<small>111 KB</small></a></div><h2 id="session-map">Session map</h2>
+<div class="keyidea" title="Outcome of this session">
+<p>After this session you can:</p>
+<ol type="1">
+<li>integrate sensing, network, security, cloud logic, estimation, planning, control and energy into one end-to-end simulation, and say which parts of it are real code from Units 1 to 11 and which are assumed;</li>
+<li>define and measure the success rate, coverage, energy, message latency and loss of a whole system, with confidence intervals over repeated runs;</li>
+<li>compare a design against a baseline, run ablations, and find the flaw that no unit test found (here, a detector threshold that missed a fifth of the deadlines);</li>
+<li>trace every requirement of the course to a result, an assumption or an open item;</li>
+<li>write an engineering report on a system, and pick one of ten alternative capstone briefs.</li>
+</ol>
+</div>
+<ul>
+<li><strong>Prerequisites:</strong> all of Units 1 to 11. In particular the shared rover (Units 8, 9, 11), the occupancy grid and filters (Unit 10), MQTT and HMAC commands (Units 5 and 7).</li>
+<li><strong>Difficulty ladder used:</strong> easy → medium → medium-hard → hard (Sections 3.1 to 3.4); the hardest tier is posed as open questions in Section 3.5.</li>
+<li><strong>Deliverables:</strong> this document (.tex, .pdf, .docx), 6 figures, the module <code>codes/capstone/greenhouse_rover/</code> (<code>plan_legs</code>, <code>run_leg</code>, <code>leg_reliability</code>, <code>simulate_day</code>, <code>security_test</code>, <code>send_qos1</code>, the energy model; 6 tests), the logs of every printed number (<code>fig0N_log.txt</code>, <code>analysis_trace_log.txt</code>), and the report skeleton and ten briefs in Section 3.5.</li>
+<li><strong>Source anchors:</strong> nothing new is quoted from a paper; every component is the code of an earlier Unit. <strong>The greenhouse, the four plants’ drying time constants (3, 4, 5, 6 hours), the thresholds (dry 0.30, wilting 0.20), the sensor noise (0.02), the link model (loss probability, 80 ms plus an exponential latency), the pump and idle currents, and the “EKF-quality” pose noise (2 cm, 2 cm, 0.5 degree) are assumed.</strong> The EKF-quality pose is what Unit 10 reached <em>beside walls</em> in a corridor; it is assumed, not demonstrated, for every leg of this room. Nothing ran on hardware.</li>
+</ul>
+<h2 id="terms-the-term-tree">1. Terms: the term tree</h2>
+<table>
+<colgroup>
+<col style="width: 22%" />
+<col style="width: 14%" />
+<col style="width: 37%" />
+<col style="width: 13%" />
+<col style="width: 10%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Term</th>
+<th style="text-align: center;">Symbol</th>
+<th style="text-align: left;">One-line meaning</th>
+<th style="text-align: center;">Where it appears</th>
+<th style="text-align: center;">New / known</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">system test (end to end)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">running all layers together on a task and measuring the outcome</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">task success rate</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the fraction of dry events watered within the 30-minute deadline</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">coverage</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the fraction of plant-hours with moisture at or above the dry threshold</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">message loss and delivery</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the fraction of messages that never arrive (after retries) or do</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">known</td>
+</tr>
+<tr>
+<td style="text-align: left;">tail latency (percentile)</td>
+<td style="text-align: center;"><span class="math inline">p_{95}</span></td>
+<td style="text-align: left;">the delay that all but the slowest 5% of messages beat</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">baseline</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the simple design the new one must beat (here, a timer)</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">ablation</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">changing one design choice at a time to see what it is worth</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">Monte Carlo confidence interval</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the mean over many seeded runs with its 95% interval <span class="math inline">1.96\,s/\sqrt n</span></td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">requirement trace</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a table from each requirement to the evidence for it</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">state of charge and daily energy</td>
+<td style="text-align: center;">mAh</td>
+<td style="text-align: left;">battery charge used per day against the usable charge</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">known</td>
+</tr>
+<tr>
+<td style="text-align: left;">engineering report</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a document that states the problem, method, results with uncertainty, limits and decisions</td>
+<td style="text-align: center;">3.5</td>
+<td style="text-align: center;">new</td>
+</tr>
+</tbody>
+</table>
+<p>Terms <em>used but not taught here</em>: statistical hypothesis tests (named: here a 95% interval is quoted instead), queueing theory (named), formal verification (named), digital twins at scale (Unit 6), fleet management (named).</p>
+<h2 id="remember">2. Remember</h2>
+<div class="definition" title="What a system test is for">
+<p>A <strong>unit test</strong> shows that a part does what its author expects. A <strong>system test</strong> shows that the parts together do what the <em>user</em> needs. The two disagree surprisingly often: every component here passed its own tests, and the first end-to-end run still missed 22% of its deadlines.</p>
+</div>
+<div class="definition" title="The five measures of the syllabus">
+<ol type="1">
+<li><strong>Task success rate:</strong> a dry event is <em>served</em> if the plant is watered within 30 minutes of its moisture first falling below 0.30. (2) <strong>Coverage:</strong> <span class="math inline">1-\dfrac{\text{dry plant-hours}}{4\times12}</span> over a 12-hour working day. (3) <strong>Energy:</strong> battery charge used per day, against the usable 2080 mAh. (4) <strong>Message latency:</strong> the sensor-to-cloud and command delays, as percentiles. (5) <strong>Message loss:</strong> the fraction of messages never delivered. Every measure is a mean over 40 simulated days with its 95% interval.</li>
+</ol>
+</div>
+<p><strong>Memory hooks.</strong></p>
+<ul>
+<li><em>A system is as good as its worst-integrated seam.</em></li>
+<li><em>Always run the baseline; a design that is not compared is not evaluated.</em></li>
+<li><em>Change one thing at a time (an ablation), and print what it cost as well as what it gained.</em></li>
+<li><em>Quote the interval, not just the mean.</em></li>
+<li><em>An assumption stated is a limit; an assumption hidden is a bug.</em></li>
+</ul>
+<p><strong>Before you read on: three predictions</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>The rover steers on encoder odometry alone (right wheel 0.5% large). Over a 15-second trip to a plant, does it arrive within 10 cm of the plant: about always, about half the time, or almost never?</li>
+<li>A timer baseline waters all plants every 2 hours. An event-driven design waters only the dry ones. Which uses less water, which leaves fewer plant-hours dry?</li>
+<li>A link loses 10% of packets; MQTT QoS 1 retries up to 5 times. What fraction of messages is lost for good: about 10%, about 1%, or about 0.001%?</li>
+</ol>
+<p><strong>Recall quiz</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>Why is the mean of 40 runs quoted with an interval?</li>
+<li>What does an ablation change, and how many things at a time?</li>
+<li>Why is the baseline part of the experiment, not an afterthought?</li>
+<li>What does the 95th-percentile latency say that the mean does not?</li>
+<li>Which assumption of this capstone does Unit 10 support only beside a wall?</li>
+</ol>
+<h2 id="understand-the-system">3. Understand: the system</h2>
+<h3 id="tier-1-easy-the-whole-loop-and-how-to-measure-it">3.1 Tier 1 (easy): the whole loop, and how to measure it</h3>
+<p>Figure 1 is the system of the course in one picture. Four soil nodes read the moisture of four plants every 10 minutes (Units 2 to 4) and send a 7-byte packed reading (Unit 6: JSON 54 bytes, CBOR 51) as an MQTT QoS 1 PUBLISH of 23 bytes on the wire (Unit 5). The cloud filters the readings with an EMA (coefficient 0.4, Unit 3), flags a plant whose filtered moisture falls below a threshold (a hysteresis detector, Unit 6), and sends the rover a command signed with an HMAC with an 8-byte tag and a counter (Unit 7). The rover verifies it, plans the order of the visits (the best of all orders) and the paths (A* on the grid inflated by 0.175 m, then line-of-sight smoothing; Unit 11), follows them with pure pursuit on a pose estimate (Units 9 and 10), waters each plant for 20 s, and returns to the dock.</p>
+<figure>
+<img src="../assets/fig/u12/fig01_architecture.png" style="width:95.0%" alt="The Smart Greenhouse Rover as one loop: four soil nodes, an MQTT link with retries, a cloud detector that signs commands, the rover that plans, follows and stops, and the actuators; the numbers are those of Units 2 to 11 and are computed by the capstone’s script." />
+<figcaption aria-hidden="true">The Smart Greenhouse Rover as one loop: four soil nodes, an MQTT link with retries, a cloud detector that signs commands, the rover that plans, follows and stops, and the actuators; the numbers are those of Units 2 to 11 and are computed by the capstone’s script.</figcaption>
+</figure>
+<p><em>The test world.</em> A 10 m by 6 m greenhouse with the two plant beds and the crate of Unit 11, the dock at (0.6, 0.6) and four plants. Each plant’s soil moisture <span class="math inline">m</span> decays toward 0.10 with a time constant of 3, 4, 5 or 6 hours (each varied by <span class="math inline">\pm10\%</span> from day to day, and all assumed), and is set to 0.50 by a watering. A plant is <strong>dry</strong> below 0.30 and <strong>wilting</strong> below 0.20; moisture falls from 0.30 to 0.20 in <span class="math inline">\tau\ln2</span>, 2.1 to 4.2 hours. A working day is 12 hours; the rover’s pack is the 2600 mAh pack of Unit 2 with 80% usable.</p>
+<p><em>The measures</em> (Section 2). The <strong>success rate</strong> is the fraction of dry events served within 30 minutes; the <strong>coverage</strong> is the fraction of plant-hours not dry. All numbers are means over <strong>40 simulated days</strong> (seeds 0 to 39) quoted with their 95% interval <span class="math inline">1.96\,s/\sqrt{40}</span> (the standard error of a mean; a normal approximation, adequate here).</p>
+<p><em>The baseline.</em> A <strong>timer</strong>: no sensors, no cloud; every <span class="math inline">N</span> hours the rover visits all four plants in the best order and waters them, whatever their state. It is the system a gardener with a clock would build, and it is what the event-driven design must beat. We run it for <span class="math inline">N=1,2,3,4,6</span> hours.</p>
+<h3 id="tier-2-medium-the-navigation-layer-as-part-of-the-system">3.2 Tier 2 (medium): the navigation layer, as part of the system</h3>
+<p>The rover must reach each plant within 10 cm (the pump’s nozzle reach, assumed) without touching an obstacle. The system uses the real planners and the simulated rover of Units 8 to 11 for this: all <strong>20 legs</strong> between the dock and the four plants are planned (A*, inflation 0.175 m, smoothing) and driven <strong>30 times each</strong> with the right wheel 0.5% large and random slip (Unit 8), pure pursuit with a lookahead of 0.2 m, and a 30 ms lag in the turn rate (Unit 9), under three pose sources (<code>fig02_legs.py</code>):</p>
+<table>
+<caption>reliability of the navigation layer by pose source (success = arrives within 10 cm without touching an obstacle). Prediction 1 of Section 2: <strong>almost never</strong> with odometry alone. For the dock to P4 leg (8.21 m): arrival error 94 cm with odometry, 7.0 cm with the EKF-quality estimate, 4.9 cm with the true pose.</caption>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">steering on</th>
+<th style="text-align: right;">mean success over the 20 legs</th>
+<th style="text-align: right;">mean arrival error</th>
+<th style="text-align: right;">collision probability</th>
+<th style="text-align: right;">mean leg time</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">encoder odometry</td>
+<td style="text-align: right;">0.2%</td>
+<td style="text-align: right;">65.8 cm</td>
+<td style="text-align: right;">62.0%</td>
+<td style="text-align: right;">15.3 s</td>
+</tr>
+<tr>
+<td style="text-align: left;">EKF-quality estimate (assumed noise)</td>
+<td style="text-align: right;"><strong>99.3%</strong></td>
+<td style="text-align: right;">7.1 cm</td>
+<td style="text-align: right;">0%</td>
+<td style="text-align: right;">15.0 s</td>
+</tr>
+<tr>
+<td style="text-align: left;">true pose (oracle)</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">4.9 cm</td>
+<td style="text-align: right;">0%</td>
+<td style="text-align: right;">15.3 s</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="../assets/fig/u12/fig02_legs.png" style="width:95.0%" alt="Left: arrival error (log axis) for each of the 20 legs under the three pose sources; the dotted line marks the 10 cm tolerance. Right: four runs of the dock-to-P4 leg steering on odometry (red: all drift left and hit the wall at the top) and on the EKF-quality estimate (blue: all arrive)." />
+<figcaption aria-hidden="true">Left: arrival error (log axis) for each of the 20 legs under the three pose sources; the dotted line marks the 10 cm tolerance. Right: four runs of the dock-to-P4 leg steering on odometry (red: all drift left and hit the wall at the top) and on the EKF-quality estimate (blue: all arrive).</figcaption>
+</figure>
+<p>The 4.9 cm of the oracle is the stopping criterion (the controller stops within 5 cm of the goal); the EKF-quality runs add the 2 cm of pose noise. <strong>The leg reliabilities are the interface between the navigation layers and the rest of the system:</strong> the day simulation uses each leg’s measured time and success probability (the EKF-quality legs fail in about one run in 150: four of the 20 legs failed once in 30 runs, a success rate of 0.967, and the other 16 never failed).</p>
+<p><strong>An honest limit.</strong> The “EKF-quality” pose is <em>true pose plus noise of 2 cm, 2 cm and 0.5 degree</em>: the accuracy Unit 10 measured for its EKF beside a wall and for the grid experiment. In this room the rover is not always beside a wall (the aisles are 1.6 m wide, the aisle between the beds has walls on both sides, but the paths cross open floor). The capstone therefore <em>assumes</em> that the estimator keeps that accuracy everywhere; it does <strong>not</strong> run the Unit 10 filter on these legs. This is the weakest link of the integration and the first thing to test on real hardware.</p>
+<h3 id="tier-3-medium-hard-the-day-the-network-the-tuning">3.3 Tier 3 (medium-hard): the day, the network, the tuning</h3>
+<h4 id="one-day">3.3.1 One day</h4>
+<p>Figure 3 shows one simulated day of the event-driven system. Each plant’s moisture decays until its filtered reading falls below the threshold; the cloud signs a command; the rover waters the plant and the moisture jumps to 0.50. That day (<code>fig03_log.txt</code>): 5 dry events, all served; 17 trips; 305 messages, none lost; the uplink latency percentiles were 0.17, 1.15 and 1.32 s (50th, 95th, 99th) and the command latency 0.15, 1.26 and 1.37 s.</p>
+<figure>
+<img src="../assets/fig/u12/fig03_day.png" style="width:95.0%" alt="One simulated 12 h day: the soil moisture of the four plants decays (time constants 3, 4, 5 and 6 h); when a plant is flagged the rover is commanded, waters it, and the moisture returns to 0.50 (the thin grey bands are the rover’s trips, 40 to 100 s each). The dotted lines mark the dry (0.30) and wilting (0.20) levels." />
+<figcaption aria-hidden="true">One simulated 12 h day: the soil moisture of the four plants decays (time constants 3, 4, 5 and 6 h); when a plant is flagged the rover is commanded, waters it, and the moisture returns to 0.50 (the thin grey bands are the rover’s trips, 40 to 100 s each). The dotted lines mark the dry (0.30) and wilting (0.20) levels.</figcaption>
+</figure>
+<h4 id="the-first-design-failed-its-own-test">3.3.2 The first design failed its own test</h4>
+<p>The first design flagged a plant when its filtered reading fell below the <em>dry level itself</em>, 0.30. Over 40 days it served <strong>77.6%</strong> of the dry events within 30 minutes (<span class="math inline">\pm3.3</span>), with 4.99 dry plant-hours per day. The cause is arithmetic, not a bug: a reading every 10 minutes, a filter (coefficient 0.4) that lags the true moisture, a hysteresis detector that needs the filtered value to cross and a trip of up to 100 s together add up to a delay of the same order as the deadline. The detector fires <em>after</em> the plant is dry, and then the clock is already running. Moving the <strong>detector threshold to 0.33</strong> warns earlier: the moisture slope at 0.30 is <span class="math inline">-(0.30-0.10)/\tau=-0.2/\tau</span>, so a threshold 0.03 higher gives a lead of about <span class="math inline">0.03\tau/0.2=0.15\,\tau</span>: roughly 27 minutes for <span class="math inline">\tau=3</span> h and 54 minutes for <span class="math inline">\tau=6</span> h (25 and 50 minutes from the exact exponential), which absorbs the sampling and filter delays. Result: <strong>99.6% served (<span class="math inline">\pm0.8</span>), 0.21 dry plant-hours per day</strong>, at the price of more water (3.50 to 4.30 litres per day) and more trips (13.1 to 15.9). None of the unit tests could have found this: it is a property of the <em>composition</em>.</p>
+<h4 id="the-baseline-comparison">3.3.3 The baseline comparison</h4>
+<p>Forty days of each design (<code>fig04_log.txt</code>; mean <span class="math inline">\pm 95</span>% interval):</p>
+<table style="width:100%;">
+<caption>the event-driven design against the timer baseline, 40 days each. Coverage is <span class="math inline">1-\text{dry hours}/48</span> (the dry hours per day are 4.99, 0.21, 0.07, 1.61, 8.02, 15.56 and 27.11). Prediction 2 of Section 2: the event design uses <em>less water</em> than the 2-hour timer (4.30 against 4.89 litres, 12% less) and leaves <strong>7.7 times fewer plant-hours dry</strong> (0.21 against 1.61). Against the 1-hour timer, which is almost as good at keeping plants wet, it uses <strong>60% less water</strong> and 24% less battery charge, with 0.21 dry hours against 0.07.</caption>
+<colgroup>
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">design</th>
+<th style="text-align: right;">served in 30 min</th>
+<th style="text-align: right;">coverage</th>
+<th style="text-align: right;">water (L/day)</th>
+<th style="text-align: right;">trips/day</th>
+<th style="text-align: right;">battery (mAh/day)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">event, detector 0.30 (first design)</td>
+<td style="text-align: right;">77.6% (<span class="math inline">\pm 3.3</span>)</td>
+<td style="text-align: right;">89.6%</td>
+<td style="text-align: right;">3.50 (<span class="math inline">\pm 0.06</span>)</td>
+<td style="text-align: right;">13.1</td>
+<td style="text-align: right;">279.7 (<span class="math inline">\pm 1.7</span>)</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>event, detector 0.33</strong></td>
+<td style="text-align: right;"><strong>99.6%</strong> (<span class="math inline">\pm 0.8</span>)</td>
+<td style="text-align: right;"><strong>99.6%</strong></td>
+<td style="text-align: right;">4.30 (<span class="math inline">\pm 0.08</span>)</td>
+<td style="text-align: right;">15.9</td>
+<td style="text-align: right;">302.4 (<span class="math inline">\pm 2.0</span>)</td>
+</tr>
+<tr>
+<td style="text-align: left;">timer every 1 h</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">99.9%</td>
+<td style="text-align: right;">10.78 (<span class="math inline">\pm 0.14</span>)</td>
+<td style="text-align: right;">12.0</td>
+<td style="text-align: right;">397.8 (<span class="math inline">\pm 3.5</span>)</td>
+</tr>
+<tr>
+<td style="text-align: left;">timer every 2 h</td>
+<td style="text-align: right;">59.8% (<span class="math inline">\pm 8.9</span>)</td>
+<td style="text-align: right;">96.6%</td>
+<td style="text-align: right;">4.89 (<span class="math inline">\pm 0.10</span>)</td>
+<td style="text-align: right;">6.0</td>
+<td style="text-align: right;">258.7 (<span class="math inline">\pm 2.7</span>)</td>
+</tr>
+<tr>
+<td style="text-align: left;">timer every 3 h</td>
+<td style="text-align: right;">26.0% (<span class="math inline">\pm 3.2</span>)</td>
+<td style="text-align: right;">83.3%</td>
+<td style="text-align: right;">2.92 (<span class="math inline">\pm 0.09</span>)</td>
+<td style="text-align: right;">4.0</td>
+<td style="text-align: right;">212.3 (<span class="math inline">\pm 2.1</span>)</td>
+</tr>
+<tr>
+<td style="text-align: left;">timer every 4 h</td>
+<td style="text-align: right;">8.9% (<span class="math inline">\pm 2.3</span>)</td>
+<td style="text-align: right;">67.6%</td>
+<td style="text-align: right;">1.96 (<span class="math inline">\pm 0.05</span>)</td>
+<td style="text-align: right;">3.0</td>
+<td style="text-align: right;">189.1 (<span class="math inline">\pm 2.0</span>)</td>
+</tr>
+<tr>
+<td style="text-align: left;">timer every 6 h</td>
+<td style="text-align: right;">0%</td>
+<td style="text-align: right;">43.5%</td>
+<td style="text-align: right;">1.00</td>
+<td style="text-align: right;">2.0</td>
+<td style="text-align: right;">166.4 (<span class="math inline">\pm 1.2</span>)</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="../assets/fig/u12/fig04_compare.png" style="width:95.0%" alt="Left: dryness against water for the timer baseline (orange: 1 to 6 hours) and the event-driven design (purple: detector at 0.30, blue star: detector at 0.33): the tuned event design sits below and to the left of the timer curve. Right: the rover’s battery charge per 12 h day: all designs use under 400 mAh of the 2080 mAh usable." />
+<figcaption aria-hidden="true">Left: dryness against water for the timer baseline (orange: 1 to 6 hours) and the event-driven design (purple: detector at 0.30, blue star: detector at 0.33): the tuned event design sits below and to the left of the timer curve. Right: the rover’s battery charge per 12 h day: all designs use under 400 mAh of the 2080 mAh usable.</figcaption>
+</figure>
+<p>What the event design does <strong>not</strong> win: it makes 15.9 trips a day against the 2-hour timer’s 6.0, and uses 17% more battery charge than that timer (302 against 259 mAh). The event-driven design buys water and plant health with rover travel and radio traffic.</p>
+<h4 id="the-network">3.3.4 The network</h4>
+<p>The node-to-cloud link is modelled as independent packet loss <span class="math inline">p</span> (assumed 10% at the baseline), QoS 1 retries every second up to 5 attempts, and a one-way latency of 80 ms plus an exponential with mean 100 ms. A message is lost for good only if all 5 attempts are lost, with probability <span class="math inline">p^5</span>: <strong>0.001% at <span class="math inline">p=0.1</span></strong> (prediction 3 of Section 2: about 0.001%) against the 10% of QoS 0, and in the 12155 messages simulated at <span class="math inline">p=0.1</span> none was lost (requirement R14: 99.999%). With the sweep (<code>fig05_log.txt</code>; 30 days each):</p>
+<table style="width:100%;">
+<caption>the system against packet loss. The <em>latency tail</em> grows much faster than the median (the 99th percentile is 3.7 times the median at <span class="math inline">p=0</span> and 12 times at <span class="math inline">p=0.1</span>), because every lost packet adds a whole retry interval. The task survives heavy loss (94.9% at 70%): moisture changes over hours, so a delay of seconds, or even a lost reading in 6, does not matter; the cost shows up as extra bytes (2.8 times at <span class="math inline">p=0.7</span>).</caption>
+<colgroup>
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: right;">packet loss</th>
+<th style="text-align: right;">lost for good</th>
+<th style="text-align: right;">theory <span class="math inline">p^5</span></th>
+<th style="text-align: left;">uplink latency p50 / p95 / p99</th>
+<th style="text-align: right;">served in 30 min</th>
+<th style="text-align: right;">dry plant-h/day</th>
+<th style="text-align: right;">bytes/day</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">0%</td>
+<td style="text-align: right;">0%</td>
+<td style="text-align: left;">0.15 / 0.38 / 0.55 s</td>
+<td style="text-align: right;">99.2%</td>
+<td style="text-align: right;">0.20</td>
+<td style="text-align: right;">7220</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.1</td>
+<td style="text-align: right;">0.000%</td>
+<td style="text-align: right;">0.001%</td>
+<td style="text-align: left;">0.16 / 1.17 / 1.95 s</td>
+<td style="text-align: right;">99.4%</td>
+<td style="text-align: right;">0.20</td>
+<td style="text-align: right;">8031</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.3</td>
+<td style="text-align: right;">0.26%</td>
+<td style="text-align: right;">0.24%</td>
+<td style="text-align: left;">0.21 / 2.16 / 3.18 s</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">0.27</td>
+<td style="text-align: right;">10250</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.5</td>
+<td style="text-align: right;">2.7%</td>
+<td style="text-align: right;">3.1%</td>
+<td style="text-align: left;">0.37 / 3.20 / 4.20 s</td>
+<td style="text-align: right;">98.9%</td>
+<td style="text-align: right;">0.36</td>
+<td style="text-align: right;">13675</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.7</td>
+<td style="text-align: right;">15.7%</td>
+<td style="text-align: right;">16.8%</td>
+<td style="text-align: left;">1.16 / 4.13 / 4.28 s</td>
+<td style="text-align: right;">94.9%</td>
+<td style="text-align: right;">0.93</td>
+<td style="text-align: right;">20024</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="../assets/fig/u12/fig05_network.png" style="width:95.0%" alt="Left: the share of dry events served within 30 min (blue) and the dry plant-hours per day (orange) against the packet-loss probability: the system degrades slowly. Right: the median, 95th and 99th percentile of the sensor-to-cloud latency against loss: the tail grows fastest." />
+<figcaption aria-hidden="true">Left: the share of dry events served within 30 min (blue) and the dry plant-hours per day (orange) against the packet-loss probability: the system degrades slowly. Right: the median, 95th and 99th percentile of the sensor-to-cloud latency against loss: the tail grows fastest.</figcaption>
+</figure>
+<p><em>Telemetry timing (requirement R2: under 2 s).</em> At <span class="math inline">p=0.1</span> the median is 0.16 s, the 95th percentile 1.17 s, but <strong>0.96% of the messages take more than 2 s</strong> (they needed a second retry after the 1 s timer). With a retry timer of 0.5 s the share over 2 s falls to 0.026%, with 0.3 s to 0 (0 of the simulated messages, also at loss 0.3 and 0.5, p99 1.1 and 1.4 s), at the same byte cost: a shorter retry interval is free in bytes and decisive for the tail (<code>analysis_trace_log.txt</code>; the latency model is assumed). With 8031 bytes per day on the uplink (the commands included) against 24,443 bytes for the same readings as JSON (3.04 times the bytes per PUBLISH), the packed payload of Unit 6 is worth a factor of 3 in radio time.</p>
+<h3 id="tier-4-hard-energy-security-ablations-and-the-requirement-trace">3.4 Tier 4 (hard): energy, security, ablations and the requirement trace</h3>
+<h4 id="energy">3.4.1 Energy</h4>
+<p>The rover’s current comes from the earlier models: <strong>moving</strong>, the two motors at 0.5 m/s on the flat (Unit 9 motor model: 4.34 V and 0.108 A each, 127 mA from the battery) plus the edge computer (375 mA, Unit 2) = <strong>502 mA</strong>; <strong>watering</strong> 375 + 300 mA (pump, assumed) = 675 mA; <strong>docked</strong>, the computer sleeps and the radio listens in power-save mode, <strong>15 mA</strong> (assumed; 10 mA for the timer baseline, which only needs a clock). In a day (<code>fig06_log.txt</code>): the event design moves 439 s (61 mAh), waters 344 s (65 mAh) and idles 11.8 h (177 mAh): 302 mAh, 14.5% of the usable 2080 mAh: <strong>6.9 days per charge</strong>. The timer’s 258.7 mAh gives 8.0 days.</p>
+<figure>
+<img src="../assets/fig/u12/fig06_energy_security.png" style="width:95.0%" alt="Left: battery charge per 12 h day by activity for the event design, the 2-hour timer and an event design whose computer never sleeps: 302 mAh, 259 mAh and 4544 mAh against the usable 2080 mAh. Right: the security test of the command channel." />
+<figcaption aria-hidden="true">Left: battery charge per 12 h day by activity for the event design, the 2-hour timer and an event design whose computer never sleeps: 302 mAh, 259 mAh and 4544 mAh against the usable 2080 mAh. Right: the security test of the command channel.</figcaption>
+</figure>
+<p><strong>The decisive design choice is not in the motion at all:</strong> a rover whose computer stays on while docked would use <span class="math inline">0.375\times12=4500</span> mAh a day, <strong>216% of the usable pack</strong> (the bar on the right): the pack would be flat in 5.5 hours. Sleeping the computer between commands and listening with the low-power radio is what makes the rover feasible; the motors themselves use 5% of the day’s charge (15.5 of 302 mAh). (Unit 2 found the same at a small scale: “the computer, not the wheels, is the larger load”.) This design needs the radio’s power-save mode to wake the computer in time, which was <strong>assumed</strong>, not tested.</p>
+<p>The soil nodes are a separate question (requirements R1 and R4): at the Unit 2 power budget, one reading every 60 s lasts <strong>20.8 days</strong> on the 2000 mAh battery (fails R4: 30 days), every 5 minutes <strong>102.6 days</strong>, every 10 minutes <strong>202 days</strong> (<code>analysis_trace_log.txt</code>; 97% of the charge is still in the 2 s awake). The system test shows that 5-minute readings serve 100% of the events (0.01 dry plant-hours) and 10-minute readings 99.6%, while 30-minute readings serve only <strong>54.9%</strong>: the sampling period can be relaxed from the 60 s of requirement R1 to 5 minutes, which meets both R4 and the task. (The requirement owner must approve this change; it is a proposal.)</p>
+<h4 id="security">3.4.2 Security</h4>
+<p>The command channel is the only way to make the rover move (R7). <code>security_test</code> sends the rover’s verifier a genuine signed command (accepted), the same command again (refused as a replay: the counter must increase), and <strong>5000 commands with random 8-byte tags and fresh counters: 0 accepted</strong>. The probability per guess is <span class="math inline">2^{-64}=5.4\times10^{-20}</span>. For comparison with a 1-byte tag, 20 of 5000 were accepted, the expected <span class="math inline">5000/256=19.5</span>: the truncation length is the difference between safe and open. Together with Unit 7’s 100,000-guess run and the ACL, R7 and R24 hold in the model; the verifier itself, the key storage and the radio are, as in Unit 7, not attacked.</p>
+<h4 id="ablations-what-each-layer-is-worth">3.4.3 Ablations: what each layer is worth</h4>
+<p>Changing <strong>one thing at a time</strong> from the tuned design (40 days each, <code>analysis_trace_log.txt</code>):</p>
+<table>
+<caption>the ablations. Two layers are worth <em>everything</em>: the pose estimate (0% success without it) and the computer’s sleep (a flat battery); the network is worth very little at this task’s time scale, and the detector threshold is worth 22 points of success. (The odometry-only run reports an energy of 270 mAh only because each failed trip is aborted at its first leg in the model; a real rover would have hit a bed.)</caption>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">change</th>
+<th style="text-align: right;">served in 30 min</th>
+<th style="text-align: right;">dry plant-h/day</th>
+<th style="text-align: left;">notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">none (the design)</td>
+<td style="text-align: right;">99.6%</td>
+<td style="text-align: right;">0.21</td>
+<td style="text-align: left;"></td>
+</tr>
+<tr>
+<td style="text-align: left;">detector at 0.30 instead of 0.33</td>
+<td style="text-align: right;">77.6%</td>
+<td style="text-align: right;">4.99</td>
+<td style="text-align: left;">the first design</td>
+</tr>
+<tr>
+<td style="text-align: left;">readings every 30 min instead of 10</td>
+<td style="text-align: right;">54.9%</td>
+<td style="text-align: right;">6.25</td>
+<td style="text-align: left;">too slow for the 30-minute deadline</td>
+</tr>
+<tr>
+<td style="text-align: left;">readings every 5 min</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">0.01</td>
+<td style="text-align: left;">594 messages/day instead of 304</td>
+</tr>
+<tr>
+<td style="text-align: left;">packet loss 0.5 instead of 0.1</td>
+<td style="text-align: right;">98.9%</td>
+<td style="text-align: right;">0.36</td>
+<td style="text-align: left;">latency tail 3.2 s</td>
+</tr>
+<tr>
+<td style="text-align: left;">rover steers on <strong>odometry</strong> instead of the EKF-quality pose</td>
+<td style="text-align: right;"><strong>0%</strong></td>
+<td style="text-align: right;">39.44</td>
+<td style="text-align: left;">every trip fails: 66.6 failed trips a day</td>
+</tr>
+<tr>
+<td style="text-align: left;">replace the planner’s inflation by none</td>
+<td style="text-align: right;">(collisions, Unit 11)</td>
+<td style="text-align: right;"></td>
+<td style="text-align: left;">37 of 191 sample points in collision</td>
+</tr>
+<tr>
+<td style="text-align: left;">rover computer never sleeps</td>
+<td style="text-align: right;">pack empty in 5.5 h</td>
+<td style="text-align: right;"></td>
+<td style="text-align: left;">4544 mAh per day</td>
+</tr>
+</tbody>
+</table>
+<h4 id="the-requirement-trace">3.4.4 The requirement trace</h4>
+<p>Every requirement of the course, with where it ended. “Component” means it was verified in its Unit and <em>not</em> re-exercised by the system test; “system” means this Unit’s simulation exercised it.</p>
+<table>
+<caption>the requirement trace. The system test exercised R1, R2, R4, R6, R7, R10, R14 and R39 to R41 directly. Those marked “component” hold only as far as their Unit’s own assumptions go.</caption>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">id</th>
+<th style="text-align: left;">requirement (short)</th>
+<th style="text-align: left;">final status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">R1</td>
+<td style="text-align: left;">readings every 60 s</td>
+<td style="text-align: left;"><strong>change proposed</strong>: 5 min (system: 100% served; 60 s fails R4)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R2</td>
+<td style="text-align: left;">telemetry under 2 s</td>
+<td style="text-align: left;">system: p95 1.17 s; 0.96% over 2 s at 1 s retries, 0 with 0.3 s retries</td>
+</tr>
+<tr>
+<td style="text-align: left;">R3</td>
+<td style="text-align: left;">stop before an obstacle (under 5 cm)</td>
+<td style="text-align: left;">component (U11): ping at most every 42.5 ms; not exercised in the day simulation</td>
+</tr>
+<tr>
+<td style="text-align: left;">R4</td>
+<td style="text-align: left;">node battery 30 days</td>
+<td style="text-align: left;">system: 20.8 days at 60 s; 102.6 days at 5 min; 202 days at 10 min</td>
+</tr>
+<tr>
+<td style="text-align: left;">R5</td>
+<td style="text-align: left;">position error after 20 m under 10%</td>
+<td style="text-align: left;">component (U10): EKF 0.25%, sideways 0.6 cm, beside a wall</td>
+</tr>
+<tr>
+<td style="text-align: left;">R6</td>
+<td style="text-align: left;">plants watered when dry</td>
+<td style="text-align: left;"><strong>system: 99.6% within 30 min</strong>, 0.21 dry plant-h/day (first design 77.6%)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R7</td>
+<td style="text-align: left;">only authorised commands move the rover</td>
+<td style="text-align: left;">system: 0 of 5000 forged accepted; replay refused</td>
+</tr>
+<tr>
+<td style="text-align: left;">R8, R9</td>
+<td style="text-align: left;">motor drive and jam protection</td>
+<td style="text-align: left;">component (U2): bridge drop 0.4 V; rated 1.6 A</td>
+</tr>
+<tr>
+<td style="text-align: left;">R10</td>
+<td style="text-align: left;">rover endurance</td>
+<td style="text-align: left;">system: 302 mAh/day = 6.9 days per charge with a sleeping computer (3.1 h of continuous motion at full load, U2)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R11-R13</td>
+<td style="text-align: left;">moisture, temperature, speed accuracy</td>
+<td style="text-align: left;">component (U3)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R14</td>
+<td style="text-align: left;">99% of readings delivered</td>
+<td style="text-align: left;">system: 99.999% at 10% loss with QoS 1 (QoS 0: 90%)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R15, R17</td>
+<td style="text-align: left;">encoder counts; round trips</td>
+<td style="text-align: left;">component (U4, U5)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R16</td>
+<td style="text-align: left;">(not used: a gap in the numbering)</td>
+<td style="text-align: left;"></td>
+</tr>
+<tr>
+<td style="text-align: left;">R18-R21</td>
+<td style="text-align: left;">stale nodes, false alarms, fault detection, data volume</td>
+<td style="text-align: left;">component (U6)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R22-R26</td>
+<td style="text-align: left;">signed updates, credentials, ACL, cost of security, privacy</td>
+<td style="text-align: left;">component (U7)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R27-R29</td>
+<td style="text-align: left;">turning in place, nozzle arm, turning radius</td>
+<td style="text-align: left;">component (U8)</td>
+</tr>
+<tr>
+<td style="text-align: left;">R30-R34</td>
+<td style="text-align: left;">wheel loop, slope, stall, line following, loop timing</td>
+<td style="text-align: left;">component (U9); the day simulation uses the 30 ms lag</td>
+</tr>
+<tr>
+<td style="text-align: left;">R35-R38</td>
+<td style="text-align: left;">wall error, filter consistency, temperature correction, map</td>
+<td style="text-align: left;">component (U10); <strong>R36: overconfident along the wall (open)</strong></td>
+</tr>
+<tr>
+<td style="text-align: left;">R39-R42</td>
+<td style="text-align: left;">path, no collisions, visiting order, path-following error</td>
+<td style="text-align: left;">system for R39 to R41 (leg success 99.3%); component for R42 (U11)</td>
+</tr>
+<tr>
+<td style="text-align: left;">S1</td>
+<td style="text-align: left;">safe state on link loss</td>
+<td style="text-align: left;">component (U11): timeout 0.2 s, 12.9 cm at 0.5 m/s; not exercised in the day simulation</td>
+</tr>
+</tbody>
+</table>
+<h3 id="tier-5-hardest-open-questions-the-report-and-ten-briefs">3.5 Tier 5 (hardest): open questions, the report, and ten briefs</h3>
+<p><strong>Open questions.</strong></p>
+<ol type="1">
+<li><strong>Validate the “EKF-quality” assumption.</strong> Design the experiment that would show whether a real rover keeps 2 cm and 0.5 degrees on all 20 legs of this room: which sensors, how the truth is measured (tape marks? an overhead camera?), how many runs, and what result would force you to change R40.</li>
+<li><strong>Make the rover’s trips cheaper.</strong> The event design makes 15.9 trips a day to water four plants. Design a rule that batches waterings (waits for a second flag within 10 minutes, say), predict what it costs in dry hours, and test it with <code>simulate_day</code>.</li>
+<li><strong>Failure injection.</strong> Add a stuck sensor (a node that sends a constant reading), a dead node and a jammed wheel to the simulation. Which layer catches each one (Unit 6’s stale detection, Unit 9’s stall detection), and what is the worst-case unserved event?</li>
+</ol>
+<p><strong>The report.</strong> A capstone report has one page per question. (1) <em>Problem and requirements:</em> the goal, the five measures, the requirement table. (2) <em>Design:</em> the layers and the interfaces, with every assumed value listed. (3) <em>Method:</em> what was simulated or built, how many runs, the baseline. (4) <em>Results:</em> the table of Section 3.3.3, each number with its interval, and the figures. (5) <em>Ablations and failures:</em> what each choice is worth and what went wrong first (here the 77.6%). (6) <em>Limits and open items:</em> what is assumed, what is not verified (hardware, the pose estimate, the radio power-save mode), and what you would measure first. (7) <em>Decisions:</em> what you recommend (here: detector 0.33, readings every 5 minutes, retry timer 0.3 s, computer sleep) and what you ask the requirement owner to change. Keep the numbers in the report identical to the numbers in the logs.</p>
+<p><strong>Ten alternative capstone briefs.</strong> Each uses the same loop: sense, communicate, decide, act, measure, compare with a baseline.</p>
+<table>
+<caption>ten alternative capstone briefs. For each: pick the layers it needs, state three requirements with numbers, build the simulation from the modules of this course, define the success measure before running it, and write the report above.</caption>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: right;">#</th>
+<th style="text-align: left;">brief</th>
+<th style="text-align: left;">the loop</th>
+<th style="text-align: left;">measures</th>
+<th style="text-align: left;">baseline</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">1</td>
+<td style="text-align: left;">smart irrigation (fixed beds, valves instead of a rover)</td>
+<td style="text-align: left;">moisture nodes, MQTT, cloud rule, valve commands</td>
+<td style="text-align: left;">dry hours, water used, valve switches</td>
+<td style="text-align: left;">timer</td>
+</tr>
+<tr>
+<td style="text-align: right;">2</td>
+<td style="text-align: left;">air-quality network</td>
+<td style="text-align: left;">gas and temperature nodes, edge aggregation, alerts</td>
+<td style="text-align: left;">alarms found, false alarms per day, bytes/day, battery life</td>
+<td style="text-align: left;">fixed threshold, raw upload</td>
+</tr>
+<tr>
+<td style="text-align: right;">3</td>
+<td style="text-align: left;">line-following delivery robot</td>
+<td style="text-align: left;">line sensors, wheel PI, stop on obstacle</td>
+<td style="text-align: left;">lap time, lateral error, stops avoided</td>
+<td style="text-align: left;">open-loop drive</td>
+</tr>
+<tr>
+<td style="text-align: right;">4</td>
+<td style="text-align: left;">warehouse inventory robot</td>
+<td style="text-align: left;">grid map, A*, tag reads</td>
+<td style="text-align: left;">shelves covered, path length, energy</td>
+<td style="text-align: left;">fixed route</td>
+</tr>
+<tr>
+<td style="text-align: right;">5</td>
+<td style="text-align: left;">fall-detection wearable</td>
+<td style="text-align: left;">IMU at 100 Hz, edge detector, alert over BLE</td>
+<td style="text-align: left;">detection rate, false alarms per day, battery life</td>
+<td style="text-align: left;">threshold on one axis</td>
+</tr>
+<tr>
+<td style="text-align: right;">6</td>
+<td style="text-align: left;">smart parking</td>
+<td style="text-align: left;">ultrasonic or magnetic sensors, MQTT, dashboard</td>
+<td style="text-align: left;">occupancy accuracy, latency, node battery</td>
+<td style="text-align: left;">manual count</td>
+</tr>
+<tr>
+<td style="text-align: right;">7</td>
+<td style="text-align: left;">energy monitor</td>
+<td style="text-align: left;">current sensors, 1 s sampling, edge aggregation, anomaly alerts</td>
+<td style="text-align: left;">alerts found, bytes saved, privacy leak (Unit 7)</td>
+<td style="text-align: left;">raw upload</td>
+</tr>
+<tr>
+<td style="text-align: right;">8</td>
+<td style="text-align: left;">2-link drawing arm</td>
+<td style="text-align: left;">IK, joint PID, trajectory</td>
+<td style="text-align: left;">tracking error, workspace coverage, joint rates</td>
+<td style="text-align: left;">straight joint interpolation</td>
+</tr>
+<tr>
+<td style="text-align: right;">9</td>
+<td style="text-align: left;">self-balancing robot (simulated)</td>
+<td style="text-align: left;">IMU, Kalman filter, PD control</td>
+<td style="text-align: left;">time upright, recovery from a push, delay margin</td>
+<td style="text-align: left;">no filter</td>
+</tr>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: left;">swarm patrol (simulated)</td>
+<td style="text-align: left;">several rovers, shared grid, task allocation</td>
+<td style="text-align: left;">area covered, duplicated coverage, messages</td>
+<td style="text-align: left;">independent random walk</td>
+</tr>
+</tbody>
+</table>
+<h2 id="apply">4. Apply</h2>
+<h3 id="worked-problems">4.1 Worked problems</h3>
+<p><strong>Problem 1 (coverage).</strong> A design leaves the four plants dry for 0.84 plant-hours over a 12 h day. What is the coverage?</p>
+<p><em>Solution.</em> <span class="math inline">1-0.84/48=0.9825</span>: 98.25%.</p>
+<p><strong>Problem 2 (loss after retries).</strong> QoS 1 with 5 attempts at packet loss 0.4. What fraction of messages is lost for good, and with what probability does a delivered message need more than one attempt?</p>
+<p><em>Solution.</em> Lost: <span class="math inline">0.4^5=1.02\%</span>. Delivered needing more than one attempt: <span class="math inline">\dfrac{0.4-0.4^5}{1-0.4^5}=\dfrac{0.3898}{0.9898}=39.4\%</span>.</p>
+<p><strong>Problem 3 (node battery).</strong> The node reads every 900 s. Using Unit 2’s states (50 mA 0.2 s, 100 mA 1.3 s, 140 mA 0.3 s, 50 mA 0.2 s, 0.01 mA sleep), find the battery life of the 2000 mAh battery with 80% usable.</p>
+<p><em>Solution.</em> Awake charge <span class="math inline">10+130+42+10=192</span> mA s; sleep <span class="math inline">0.01\times898=8.98</span>; total 200.98 mA s per 900 s: 0.2233 mA; life <span class="math inline">1600/0.2233/24=298.5</span> days.</p>
+<p><strong>Problem 4 (interval).</strong> Over 40 days the success rate has mean 99.6% and a 95% interval of <span class="math inline">\pm0.8</span> points. What is the standard deviation of the daily success rate?</p>
+<p><em>Solution.</em> <span class="math inline">1.96\,s/\sqrt{40}=0.8\Rightarrow s=0.8\times6.325/1.96=2.6</span> points.</p>
+<p><strong>Problem 5 (threshold lead).</strong> A plant dries with <span class="math inline">\tau=4</span> h toward 0.10. By how many minutes does raising the detector threshold from 0.30 to 0.33 advance the warning?</p>
+<p><em>Solution.</em> Slope at 0.30: <span class="math inline">0.2/4=0.05</span> per hour; 0.03 higher: <span class="math inline">0.03/0.05=0.6</span> h = 36 minutes (more exactly <span class="math inline">\tau\ln(0.23/0.20)=0.56</span> h = 33.5 minutes with the exponential curvature).</p>
+<h3 id="code-and-figures">4.2 Code and figures</h3>
+<pre class="python"><code>import greenhouse_rover as G
+
+legs = G.plan_legs()                                    # 20 planned legs (A*, inflation 0.175 m, smoothing)
+rel = G.leg_reliability(legs, &quot;ekf&quot;, n=30)              # success and time of each leg
+day = G.simulate_day(&quot;event&quot;, seed=3, legs=legs, rel=rel, detect_lo=0.33)
+print(day[&quot;success&quot;], day[&quot;dry_h&quot;], day[&quot;litres&quot;], day[&quot;energy_mAh&quot;])
+base = G.simulate_day(&quot;timer&quot;, seed=3, legs=legs, rel=rel, timer_period_h=2.0)
+print(G.percentiles(day[&quot;lat_up&quot;]))                     # p50, p95, p99 of the sensor-to-cloud latency
+print(G.security_test(5000))                            # forged and replayed commands against the verifier</code></pre>
+<p>The module and README are in <code>codes/capstone/greenhouse_rover/</code>. Its six tests check: the cruise current (0.127 A) and the payload sizes; the 20 planned legs (collision-free against the real body); that odometry steering fails where the EKF-quality estimate succeeds; the QoS 1 loss statistics against <span class="math inline">p^5</span>; the security test (genuine accepted, replay refused, 0 forged); and the properties of the day simulation (determinism, more loss giving more lost messages, a longer timer period giving more dry hours and less water).</p>
+<p><em>What would look different if the system were wrong?</em> If the loss model were wrong the lost fraction would not follow <span class="math inline">p^5</span> (it follows it within the simulation noise: 0.26% against 0.24% at <span class="math inline">p=0.3</span>); if the detector flaw were not the cause of the 77.6%, raising the threshold would not have moved it (it moved to 99.6%, and the lead of <span class="math inline">0.15\tau</span> explains the size of the change).</p>
+<h2 id="analyze">5. Analyze</h2>
+<p><strong>Limits.</strong> With a detector threshold of 0.36 the design serves 100% with 5.49 litres a day and 20 trips: the water and trip cost rises without further benefit; at 0.30 it is the flawed first design. As the sampling period grows to 30 minutes the success falls to 54.9%; as it shrinks to 60 s it saturates at 100% with 2902 messages a day (a 10-fold radio cost for no gain).</p>
+<p><strong>Dominance.</strong> Motion and watering are 42% of the rover’s day (126 of 302 mAh; the motors alone 5%), the idle listening at 15 mA is 58% (177 mAh); the computer’s sleep decides the energy. In the latency tail, retries dominate: the 99th percentile at <span class="math inline">p=0.1</span> is 1.95 s of which at most 0.1 s is network latency.</p>
+<p><strong>Order-of-magnitude estimate.</strong> Dry events per day: each plant dries to 0.30 every <span class="math inline">\tau\ln\frac{0.5-0.1}{0.3-0.1}=\tau\ln2</span> hours after a watering: <span class="math inline">12/(0.69\tau)</span> with <span class="math inline">\tau=3,4,5,6</span>: 5.8, 4.3, 3.5, 2.9 — 16.5 watering cycles in 12 h; the simulated 15.9 trips (and 2.58 events per day for the tuned design, which waters <em>before</em> the plants are dry) are the same order.</p>
+<p><strong>Sensitivity.</strong> The result is insensitive to the network (loss 0 to 0.5: 98.9% to 100%), moderately sensitive to the detector threshold and the sampling period, and entirely dependent on the pose estimate and the sleeping computer. The first three are design parameters; the last two are <em>assumptions</em> of this capstone, and need hardware to confirm.</p>
+<p><strong>Failure modes.</strong> (1) <em>A composition flaw no unit test sees</em> (the threshold). (2) <em>Odometry-only navigation.</em> (3) <em>A computer that never sleeps.</em> (4) <em>A tail-latency target missed with a slow retry timer.</em> (5) <em>Sampling too slowly for the plant’s dynamics.</em> (6) <em>A stuck or dead sensor</em> (not simulated: open question 3). (7) <em>Reporting means without intervals.</em> (8) <em>A requirement kept past its usefulness</em> (R1 at 60 s costs a factor of five in node battery for no task gain).</p>
+<p><strong>Items used from the pedagogy checklist:</strong> limits, dominance, estimate, sensitivity, failure modes, convergence (40-day means with intervals), invariants (water used equals waterings times 0.25 L; the loss follows <span class="math inline">p^5</span>), residual (the 77.6% found by the end-to-end test), uncertainty (95% intervals everywhere), ablation, baseline comparison, and a priori versus a posteriori (the lead time of the threshold was computed before the change was simulated).</p>
+<h2 id="evaluate">6. Evaluate</h2>
+<p><strong>Was the event-driven design worth it?</strong> Against a careless timer, yes: the same dryness with 12% less water than a 2-hour timer and 60% less than a 1-hour timer, in exchange for 17% more battery charge than the 2-hour timer and 2.6 times its trips, and for a cloud, a radio and a signing key to maintain. For a four-plant greenhouse the <em>gardener’s clock</em> at 1 hour is a respectable answer (0.07 dry hours, 10.8 litres); the sensor system pays off when water is expensive or the plants are many. Say so in the report: an honest evaluation includes the case where the simple baseline wins.</p>
+<p><strong>What the simulation does not tell you.</strong> It has no people or obstacles, no wet floors, no weather, no sensor faults, no radio interference, no battery ageing and no maintenance. Its link, soil and power models are assumed; the pose estimate is assumed; the energy of the idle states is assumed. It is a <em>design tool</em> that ranks choices and finds composition flaws, not a prediction of the real greenhouse. <strong>Where to spend the first hour of real testing:</strong> the pose estimate on the 20 legs, the power-save wake-up of the rover’s computer, and the soil sensor’s real drying behaviour.</p>
+<p><strong>Context.</strong> Integration testing of this kind is standard practice in systems engineering (stated from general knowledge); the habit of running a baseline and an ablation is what separates a demonstration from an evaluation. <strong>When NOT to use this method:</strong> when the model’s assumptions are the main uncertainty (measure first), when rare catastrophic events dominate (use targeted failure injection and safety analysis, not mean-over-days statistics), and when the real system will have a different structure from the simulated one.</p>
+<p><strong>Honesty about this Unit’s numbers.</strong> Every number comes from a script run (the logs are in <code>figures/</code>); every parameter in the assumed list of the Source anchors is a round number of the right order, not a measurement. The legs’ reliability depends on an assumed pose-noise model. The statistics are means over 40 seeded days with a normal-approximation interval. The detector threshold was tuned on the same 40 seeds it was evaluated on (a small selection effect: the three thresholds tried on the ablation grid are few, but the effect was not tested on fresh seeds).</p>
+<h2 id="create">7. Create</h2>
+<div class="create" title="What you can build from this">
+<ol type="1">
+<li><strong>Replace the assumption.</strong> Run the Unit 10 EKF on all 20 legs (it needs range updates against beds as well as walls) and compare the arrival errors with the assumed 2 cm; update <code>run_leg</code>.</li>
+<li><strong>Add faults.</strong> Inject a stuck node, a dead node and a jammed wheel (open question 3) and measure the unserved events with Unit 6’s stale detector switched on and off.</li>
+<li><strong>Add people.</strong> Make an obstacle appear in an aisle at random and exercise the stop budget of Unit 11 (ping 42.5 ms) and the watchdog of 0.2 s; measure near misses.</li>
+<li><strong>Optimise the batching rule</strong> of open question 2 and plot dry hours against trips.</li>
+<li><strong>Package the whole course.</strong> The modules of every Unit plus <code>greenhouse_rover</code> can be reorganised as the package <code>iotrobotics</code> (power, sensors, firmware, net, cloud, security, kinematics, control, localize, planning, capstone).</li>
+</ol>
+</div>
+<p><strong>Running project, Layer 11: the integrated rover.</strong> Final requirements are in the trace table of Section 3.4.4. The system recommendations: detector threshold 0.33; readings every 5 minutes; retry timer 0.3 s; ping at most every 42.5 ms; command timeout 0.2 s; the rover’s computer sleeps while docked; EKF-quality pose is a requirement on the estimator (2 cm, 0.5 degree).</p>
+<h2 id="visualization-lesson">8. Visualization lesson</h2>
+<table>
+<caption>the chart types of this Unit. Ladder: <em>remember</em> the names; <em>understand</em> what each shows; <em>apply</em> the call; <em>analyse</em> how it misleads; <em>evaluate</em> when a table beats a chart (the headline comparison of Section 3.3.3); <em>create</em> a new one (a heat map of success against detector threshold and sampling period).</caption>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Chart type</th>
+<th style="text-align: left;">Best for</th>
+<th style="text-align: left;">How it misleads</th>
+<th style="text-align: left;">matplotlib call</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">architecture diagram with the measured numbers</td>
+<td style="text-align: left;">the whole system and its budgets</td>
+<td style="text-align: left;">looks complete when only the nominal flow is drawn; add the failure paths</td>
+<td style="text-align: left;"><code>FancyBboxPatch</code>, <code>ax.annotate</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">log-axis bars by condition (arrival error per leg)</td>
+<td style="text-align: left;">many cases of one measure that differ by orders of magnitude</td>
+<td style="text-align: left;">log axes hide small differences between small bars</td>
+<td style="text-align: left;"><code>ax.bar</code>, <code>ax.set_yscale("log")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">multi-line time series with event shading (the day)</td>
+<td style="text-align: left;">a process with discrete actions</td>
+<td style="text-align: left;">the time axis hides how rare the events are; list the counts</td>
+<td style="text-align: left;"><code>ax.plot(t, m)</code>, <code>ax.axvspan</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">frontier plot (two costs against each other) with error bars</td>
+<td style="text-align: left;">comparing designs that trade one thing for another</td>
+<td style="text-align: left;">the best point depends on the weights of the axes</td>
+<td style="text-align: left;"><code>ax.errorbar</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">stacked bars of a budget</td>
+<td style="text-align: left;">where a total goes</td>
+<td style="text-align: left;">stacking makes the middle segment hard to read</td>
+<td style="text-align: left;"><code>ax.bar(..., bottom=...)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">percentile curves against a parameter (log y)</td>
+<td style="text-align: left;">tail behaviour</td>
+<td style="text-align: left;">a median-only plot hides the tail entirely</td>
+<td style="text-align: left;"><code>ax.plot(p, np.percentile(...))</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">table with intervals</td>
+<td style="text-align: left;">the headline comparison</td>
+<td style="text-align: left;">too many digits; round to the interval</td>
+<td style="text-align: left;">(a Markdown table)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading Figure 4 (left) as a chart.</strong> The timer curve is a frontier: moving along it trades water for dryness. A design is better if it is below and to the left. The event design is, <em>and the error bars are smaller than the marker</em>, which is the real finding.</p>
+<h2 id="problem-set">9. Problem set</h2>
+<div class="exercise" title="Graded exercises">
+<ol type="1">
+<li>(easy) The event design serves 99.6% of events with 2.58 events per day. How many events per 40 days are unserved on average?</li>
+<li>(medium) With a QoS 1 retry interval of 0.5 s and 5 attempts at packet loss 0.3, what is the longest delivery latency (ignoring the one-way delay), and with what probability does a message need the fourth attempt or later?</li>
+<li>(medium-hard) The rover’s pack is 2600 mAh with 80% usable. If the radio idles at 40 mA instead of 15 mA, how many days does a charge last for the event design (use 61.2 and 64.5 mAh for motion and watering, and 11.78 h idle)?</li>
+<li>(hard) Show that raising a detector threshold from <span class="math inline">m_1</span> to <span class="math inline">m_2</span> above the dry level gives a lead of <span class="math inline">\tau\ln\dfrac{m_2-m_f}{m_1-m_f}</span> for exponential decay toward the floor <span class="math inline">m_f</span>, and evaluate it for <span class="math inline">m_f=0.10</span>, 0.30 to 0.33 and <span class="math inline">\tau=3</span> and 6 h.</li>
+<li>(hardest) Propose a statistical test that decides whether a design change (say, retry 0.3 s) changed the success rate, given 40 daily results before and after; state its assumptions and say why the 95% intervals of this Unit are a weaker tool.</li>
+</ol>
+</div>
+<h2 id="retrieval-practice-and-recap">10. Retrieval practice and recap</h2>
+<p><strong>Answers to the Section 2 predictions.</strong></p>
+<ol type="1">
+<li>Almost never: 0.2% of legs succeeded with odometry (65.8 cm mean error, 62% collisions).</li>
+<li>The event design uses less water (4.30 against 4.89 litres a day) and leaves fewer plant-hours dry (0.21 against 1.61).</li>
+<li>About 0.001%: <span class="math inline">0.1^5=10^{-5}</span>.</li>
+</ol>
+<p><strong>Answers to the Section 2 recall quiz.</strong></p>
+<ol type="1">
+<li>A single run is one draw of the weather and the noise; the 95% interval of the mean over runs says how much the mean itself could move.</li>
+<li>One design choice at a time; it isolates that choice’s contribution.</li>
+<li>A result has meaning only against the alternative it must beat.</li>
+<li>How bad the slow messages are: the median hides the retries that dominate the tail (1.95 s against 0.16 s at 10% loss).</li>
+<li>The “EKF-quality” pose accuracy of 2 cm and 0.5 degree: Unit 10 measured it beside a wall.</li>
+</ol>
+<p><strong>Explain it to a friend.</strong></p>
+<ul>
+<li>Why did the parts pass their tests and the whole still fail 22% of its deadlines?</li>
+<li>Why does a sleeping computer matter more to the rover than its wheels?</li>
+<li>Why is the simple timer a fair baseline, and when does it win?</li>
+</ul>
+<p><strong>Re-derive by hand tomorrow, without looking:</strong> (a) the lost fraction <span class="math inline">p^n</span> and the mean attempts of QoS 1; (b) the lead time <span class="math inline">\tau\ln\frac{m_2-m_f}{m_1-m_f}</span> of a higher threshold; (c) the battery life of a duty-cycled node from its states.</p>
+<h2 id="where-next">11. Where next</h2>
+<ul>
+<li><strong>The course is complete.</strong> What remains is the hardware you choose to add: an ESP32 kit (the firmware folders of Unit 4 and the optional kit box of each lab), a real ultrasonic sensor and a real motor. Start with the three things Section 6 names: the pose estimate on a taped floor, the rover computer’s wake-up, and a soil sensor’s real drying curve.</li>
+<li>Terms named here but not taught: hypothesis tests, queueing theory, formal verification, fleet management. They are registered in CURRICULUM.md.</li>
+<li><strong>Open threads:</strong> the pose estimate is assumed on the legs; the radio power-save wake-up is assumed; obstacles, people, sensor faults and the stop budget were not exercised end to end; the threshold was tuned on the seeds it was evaluated on; nothing ran on hardware.</li>
+</ul>
+<p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u11.html">&larr; Planning, ROS</a><span></span></p></article></div></main>
 <footer><div class="wrap">Internet of Things and Robotics crash course · Code is MIT-licensed; PDFs are for study use. Companion to the <a href="../../index.html">Generative AI and LLMs course</a>.</div></footer>
 <script>
 document.getElementById('theme').onclick=function(){var d=document.documentElement,c=d.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'),n=c==='dark'?'light':'dark';d.dataset.theme=n;try{localStorage.setItem('theme',n)}catch(e){}};

@@ -1,15 +1,548 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Unit 10: Perception and Localisation · IoT and Robotics</title>
+<title>Unit 10: Perception and Localisation: Knowing Where You Are · IoT and Robotics</title>
 <meta name="description" content="From volts and sensors to MQTT, security, kinematics, control, localisation and navigation, built around one running project: a Smart Greenhouse Rover. Twelve units with a PDF and runnable code each, a 14-lab track and an assessment bank. Built for a B.Tech student; simulation-first, no hardware needed.">
 <link rel="stylesheet" href="../../assets/css/style.css"><link rel="stylesheet" href="../assets/css/iot.css">
 <script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 <link rel="stylesheet" href="../../assets/vendor/katex/katex.min.css"></head><body>
 <header class="site-head"><div class="wrap">
 <a class="brand" href="../index.html">IoT <span>&amp;</span> Robotics<span class="long"> crash course</span></a>
-<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
+<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../playground/index.html">Playground</a><a href="../labs.html">Labs</a><a href="../assessment.html">Assessment</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
 </div></header>
-<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 10</strong><a href="#topics">Syllabus topics</a></aside><article class="doc"><p><span class="chip">Unit 10</span> <span class="chip soon">in preparation</span></p><h1>Perception and Localisation</h1><p class="lede">Gaussian noise, Bayes&#x27; rule, the Kalman filter, sensor fusion and occupancy grids.</p><p class="box warn">Notes and code for this unit are being written. The topics below are the syllabus.</p><h2 id="topics">Syllabus topics</h2><ul><li>Noise as a Gaussian; Bayes filter</li><li>The 1-D and 2-D Kalman filter</li><li>Sensor fusion: encoder and IMU</li><li>Range sensors and occupancy grids</li></ul><p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u9.html">&larr; Control</a><a class="btn" href="u11.html">Planning, ROS &rarr;</a></p></article></div></main>
+<main class="wrap"><div class="lesson"><aside class="toc" aria-label="On this page"><strong>Unit 10</strong><a href="#session-map">Session map</a><a href="#terms-the-term-tree">1. Terms: the term tree</a><a href="#remember">2. Remember</a><a href="#understand-the-derivation">3. Understand: the derivation</a><a href="#apply">4. Apply</a><a href="#analyze">5. Analyze</a><a href="#evaluate">6. Evaluate</a><a href="#create">7. Create</a><a href="#visualization-lesson">8. Visualization lesson</a><a href="#problem-set">9. Problem set</a><a href="#retrieval-practice-and-recap">10. Retrieval practice and recap</a><a href="#where-next">11. Where next</a></aside><article class="doc"><p><span class="chip">Unit 10</span> <span class="chip ">ready</span></p><h1>Perception and Localisation: Knowing Where You Are</h1><p class="lede">Gaussian noise, Bayes&#x27; rule, the Kalman filter, sensor fusion and occupancy grids.</p><div class="dl"><a class="btn primary" href="../downloads/u10/u10-notes.pdf" download>PDF notes<small>948 KB</small></a><a class="btn" href="../downloads/u10/u10-notes.docx" download>Word (.docx)<small>728 KB</small></a><a class="btn" href="../downloads/u10/u10-code.zip" download>All code (.zip)<small>39 KB</small></a></div><h2 id="session-map">Session map</h2>
+<div class="keyidea" title="Outcome of this session">
+<p>After this session you can:</p>
+<ol type="1">
+<li>describe sensor noise as a Gaussian, state Bayes’ rule, and use both to combine a prior belief with a measurement;</li>
+<li>run a histogram filter that localises a robot on a corridor with doors, and explain why a noisy move loses information that a noisy sensor must win back;</li>
+<li>derive the scalar Kalman filter (predict, update, gain), compute its steady-state gain in closed form, and show that a fixed-gain EMA filter is its special case;</li>
+<li>fuse encoders, a gyroscope and ultrasonic wall ranges in an extended Kalman filter, and say what it can and cannot correct;</li>
+<li>turn ultrasonic echoes into ranges (including the temperature error) and build an occupancy grid, and see why a map is only as good as the pose it is built with.</li>
+</ol>
+</div>
+<ul>
+<li><strong>Prerequisites:</strong> Unit 3 (noise, quantisation, the EMA filter, ultrasonic sensors), Unit 6 (the false-alarm lesson), Unit 8 (the shared rover, odometry drift, the Jacobian), Unit 9 (steering on an estimate). Basic probability.</li>
+<li><strong>Difficulty ladder used:</strong> easy → medium → medium-hard → hard (Sections 3.1 to 3.4); the hardest tier is posed as open questions in Section 3.5.</li>
+<li><strong>Deliverables:</strong> this document (.tex, .pdf, .docx), 6 figures, the module <code>codes/robotics/localize_np/</code> (Gaussian and Bayes helpers, a histogram filter, <code>Kalman1D</code>, a constant-velocity filter, the ultrasonic model, <code>PoseEKF</code>, <code>patrol</code>, <code>OccupancyGrid</code>; 9 tests, one cross-checked against SciPy’s Riccati solver), and logs of every printed number.</li>
+<li><strong>Source anchors:</strong> all formulas are derived in the text. <strong>Kalman’s 1960 paper was not read</strong> (the copies tried returned web pages, not the PDF), and neither was Thrun, Burgard and Fox, <em>Probabilistic Robotics</em>; the filter is derived here from the Gaussian product rule and checked numerically (SciPy’s discrete Riccati solution and Monte Carlo coverage). <strong>The gyroscope bias (0.2 degrees per second) and noise, the ultrasonic noise (1 cm, 2 cm), the wheel error (0.5%), the slip variance (from Unit 8), the sensor and door error rates, the wall position and the map are assumed round numbers.</strong> Nothing was run on hardware.</li>
+</ul>
+<h2 id="terms-the-term-tree">1. Terms: the term tree</h2>
+<table>
+<colgroup>
+<col style="width: 22%" />
+<col style="width: 14%" />
+<col style="width: 37%" />
+<col style="width: 13%" />
+<col style="width: 10%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Term</th>
+<th style="text-align: center;">Symbol</th>
+<th style="text-align: left;">One-line meaning</th>
+<th style="text-align: center;">Where it appears</th>
+<th style="text-align: center;">New / known</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">standard deviation and variance</td>
+<td style="text-align: center;"><span class="math inline">\sigma</span>, <span class="math inline">\sigma^2</span></td>
+<td style="text-align: left;">the spread of a noisy quantity, and its square</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">known</td>
+</tr>
+<tr>
+<td style="text-align: left;">Gaussian (normal) distribution</td>
+<td style="text-align: center;"><span class="math inline">\mathcal N(\mu,\sigma^2)</span></td>
+<td style="text-align: left;">the bell curve; the shape that many added-up small errors take</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">prior and posterior</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the belief before and after a measurement</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">Bayes’ rule</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;"><span class="math inline">P(H\mid z)=P(z\mid H)P(H)/P(z)</span>: how a measurement updates a belief</td>
+<td style="text-align: center;">3.1</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">belief</td>
+<td style="text-align: center;"><span class="math inline">b(x)</span></td>
+<td style="text-align: left;">the robot’s probability distribution over where it is</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">histogram filter</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a belief stored as one probability per cell, updated by sensing and moving</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">entropy</td>
+<td style="text-align: center;"><span class="math inline">H</span></td>
+<td style="text-align: left;">how spread out (uncertain) a belief is, in bits</td>
+<td style="text-align: center;">3.2</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">Kalman filter</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the optimal way to combine a linear motion model and measurements with Gaussian noise</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">Kalman gain</td>
+<td style="text-align: center;"><span class="math inline">K</span></td>
+<td style="text-align: left;">how much of the surprise in a measurement is believed</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">innovation</td>
+<td style="text-align: center;"><span class="math inline">\nu</span></td>
+<td style="text-align: left;">measurement minus what the filter predicted it would be</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">covariance</td>
+<td style="text-align: center;"><span class="math inline">P</span></td>
+<td style="text-align: left;">the filter’s own estimate of its uncertainty (a matrix for several states)</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">sensor fusion</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">combining several imperfect sensors into one better estimate</td>
+<td style="text-align: center;">3.3</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">gyroscope and gyro bias</td>
+<td style="text-align: center;"><span class="math inline">\omega_g</span>, <span class="math inline">b</span></td>
+<td style="text-align: left;">a sensor of turn rate, and its constant offset</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">extended Kalman filter (EKF)</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">the Kalman filter with a nonlinear model linearised at each step by its Jacobian</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">ultrasonic time of flight</td>
+<td style="text-align: center;"><span class="math inline">c</span></td>
+<td style="text-align: left;">range from the round-trip time of a sound pulse and the speed of sound</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">occupancy grid</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">a map as a grid of probabilities that each cell is occupied</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">log-odds</td>
+<td style="text-align: center;"><span class="math inline">\ell</span></td>
+<td style="text-align: left;"><span class="math inline">\ln\frac{p}{1-p}</span>, so that evidence adds</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+<tr>
+<td style="text-align: left;">filter consistency</td>
+<td style="text-align: center;"></td>
+<td style="text-align: left;">whether the reported uncertainty matches the actual error</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">new</td>
+</tr>
+</tbody>
+</table>
+<p>Terms <em>used but not taught here</em>: SLAM (named in 3.5), cameras and LiDAR (named), the unscented and particle filters (named), observability (used informally in 3.5), the Riccati equation (used as a numerical check only).</p>
+<h2 id="remember">2. Remember</h2>
+<div class="definition" title="Why a robot needs a belief">
+<p>A robot never <em>knows</em> where it is; it has measurements (noisy) and a motion model (drifting). A <strong>belief</strong> is the honest summary: a probability distribution over the possible poses. <strong>Localisation</strong> keeps the belief up to date; <strong>mapping</strong> does the same for the world.</p>
+</div>
+<div class="definition" title="The two moves of every filter">
+<p><strong>Predict:</strong> use the motion model to move the belief; uncertainty grows. <strong>Update:</strong> use a measurement to sharpen it; uncertainty shrinks. The <strong>Kalman filter</strong> is this loop for Gaussian beliefs, with the weighting chosen optimally.</p>
+</div>
+<div class="definition" title="Bayes&#39; rule">
+<p>For a hypothesis <span class="math inline">H</span> and a measurement <span class="math inline">z</span>: <span class="math inline">P(H\mid z)=\dfrac{P(z\mid H)\,P(H)}{P(z\mid H)P(H)+P(z\mid\lnot H)P(\lnot H)}</span>. The <strong>prior</strong> <span class="math inline">P(H)</span> is what you believed; the <strong>posterior</strong> <span class="math inline">P(H\mid z)</span> is what you believe after <span class="math inline">z</span>.</p>
+</div>
+<p><strong>Memory hooks.</strong></p>
+<ul>
+<li><em>Predict spreads, update squeezes.</em></li>
+<li><em>Trust the more certain source more:</em> the fused variance is always smaller than either input.</li>
+<li><em>The gain is the ratio</em> uncertainty-in-the-model over (uncertainty-in-the-model plus uncertainty-in-the-sensor).</li>
+<li><em>A fixed-gain EMA is a Kalman filter that stopped learning its gain.</em></li>
+<li><em>A map built on a drifting pose is a smeared map.</em></li>
+</ul>
+<p><strong>Before you read on: three predictions</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>A soil sensor that is 90% sensitive and has an 8% false-alarm rate flags “dry”. Dryness is present 5% of the time. How likely is it that the soil really is dry: about 90%, about 50% or about 37%?</li>
+<li>A Kalman filter smooths a sensor with noise standard deviation 0.1 on a slowly drifting level. By how much does the filter shrink the error: to 90%, 50% or 30% of the raw error?</li>
+<li>The rover steers on the estimate while driving 20 m beside a wall. With encoders alone it believes it is on course. Does it get to the end of the wall, or touch the wall, and after roughly how far?</li>
+</ol>
+<p><strong>Recall quiz</strong> (answers in Section 10).</p>
+<ol type="1">
+<li>What fraction of Gaussian noise lies within one, two and three standard deviations?</li>
+<li>When two independent estimates of the same quantity are fused, what happens to the variance?</li>
+<li>What does the Kalman gain approach when the sensor is perfect, and when the sensor is useless?</li>
+<li>Why can wall ranges fix the rover’s sideways error but not its along-the-wall error?</li>
+<li>Why does ultrasonic ranging need the air temperature?</li>
+</ol>
+<h2 id="understand-the-derivation">3. Understand: the derivation</h2>
+<h3 id="tier-1-easy-noise-probability-and-bayes">3.1 Tier 1 (easy): noise, probability and Bayes</h3>
+<p>Every sensor of Units 3 and 8 was noisy; here the noise gets a shape. Take 10000 readings of a wall 2.00 m away from an ultrasonic sensor with an assumed noise of 1 cm (<code>fig01_gauss_bayes.py</code>). The histogram of the errors is a bell: the <strong>Gaussian</strong> with density <span class="math display"> p(x)=\frac1{\sigma\sqrt{2\pi}}\exp\!\Big(-\frac{(x-\mu)^2}{2\sigma^2}\Big),\qquad P(|x-\mu|&lt;k\sigma)=\operatorname{erf}\!\Big(\frac k{\sqrt2}\Big). \tag{1}</span> The coverage is 68.27%, 95.45% and 99.73% for <span class="math inline">k=1,2,3</span>; the 10000 simulated readings give 68.68%, 95.62% and 99.68%. The bell appears because the error is the sum of many small independent effects (the central limit theorem; stated, not proved here). Averaging <span class="math inline">n</span> readings shrinks the noise as <span class="math inline">\sigma/\sqrt n</span>: for 100 readings the standard deviation of the mean is 1.0 mm, and the simulation gives a sample standard deviation of 9.985 mm with a mean error of <span class="math inline">-0.11</span> mm.</p>
+<figure>
+<img src="../assets/fig/u10/fig01_gauss_bayes.png" style="width:95.0%" alt="Left: the errors of 10000 simulated ultrasonic readings (blue) and the Gaussian with \sigma=1 cm (red); dotted lines mark 1, 2 and 3 standard deviations. Right: Bayes’ rule for a soil-dryness alert (prior 5%, hit rate 90%, false-alarm rate 8%): one “dry” reading raises the probability that the soil is dry only to 37.2%; four in a row give 99.9%." />
+<figcaption aria-hidden="true">Left: the errors of 10000 simulated ultrasonic readings (blue) and the Gaussian with <span class="math inline">\sigma=1</span> cm (red); dotted lines mark 1, 2 and 3 standard deviations. Right: Bayes’ rule for a soil-dryness alert (prior 5%, hit rate 90%, false-alarm rate 8%): one “dry” reading raises the probability that the soil is dry only to 37.2%; four in a row give 99.9%.</figcaption>
+</figure>
+<p><em>Bayes’ rule in action.</em> A sensor flags “dry” with probability 0.90 when the soil is dry and 0.08 when it is not; the soil is dry 5% of the time. After one positive reading, <span class="math display"> P(\text{dry}\mid +)=\frac{0.90\times0.05}{0.90\times0.05+0.08\times0.95}=\frac{0.045}{0.121}=0.372. \tag{2}</span> Prediction 1 of Section 2: about 37%, not 90%, because 95% of the soil is not dry and 8% of that gives more false alarms than the 90% of the rare true cases (63% of the alerts are false). This is the base-rate effect met in Unit 6 as the false alarms of a low detector limit. Independent repeated readings multiply the odds: the posterior is 37.2%, 86.9%, 98.7% and 99.9% after one to four positives. The same reading means very different things at other priors: after one positive the posterior is 10.2% at a 1% prior, 73.8% at 20% and 91.8% at 50%. <strong>A measurement never gives the belief; it updates one you already had.</strong></p>
+<h3 id="tier-2-medium-a-belief-on-a-grid-the-histogram-filter">3.2 Tier 2 (medium): a belief on a grid, the histogram filter</h3>
+<p>Take the simplest robot problem: a rover on a ring corridor of 20 cells, 7 of which have a door (the grey cells of Figure 2). It does not know which cell it is in: the belief is <span class="math inline">1/20</span> everywhere (4.32 bits of entropy). Two operations update it.</p>
+<p><em>Sense.</em> The sensor says “door” or “wall” and is right 90% of the time. Bayes’ rule, cell by cell: multiply the belief of each cell by the probability of the reading <em>if the robot were there</em> (0.9 if the cell agrees with the reading, 0.1 if not), then renormalise so that the belief sums to 1: <span class="math display"> b&#39;(i)=\frac{P(z\mid i)\,b(i)}{\sum_jP(z\mid j)\,b(j)}. \tag{3}</span> <em>Move.</em> The rover moves one cell, exactly 95% of the time, 0 or 2 cells with 2.5% each. The new belief is the old one shifted and blurred (a convolution): <span class="math inline">b&#39;(i)=0.95\,b(i-1)+0.025\,b(i)+0.025\,b(i-2)</span> (<code>HistogramFilter.move</code>). Sensing <em>sharpens</em> the belief; moving <em>blurs</em> it.</p>
+<p>The <strong>entropy</strong> <span class="math inline">H=-\sum_ib(i)\log_2b(i)</span> measures the spread: 4.32 bits for the uniform belief, 0 bits for a certain one. Averaged over 400 runs (the lower panel of Figure 2; the filter starts uniform, the robot at a random cell), the probability that the most likely cell is the true cell rises from 9.2% after the first reading to 66.2% after 14, the mean probability on the true cell from 8.0% to 53.7%, and the mean entropy falls from 3.84 to 1.58 bits. It is slow because a “wall” reading is nearly useless (13 of 20 cells are walls) and each move gives back some entropy.</p>
+<figure>
+<img src="../assets/fig/u10/fig02_histogram.png" style="width:80.0%" alt="Top: belief over the 20 cells after the 1st, 3rd, 6th and 10th reading in one run (the run whose probability on the true cell after 10 readings is closest to the median of 400 runs): grey cells are doors, the red line the true cell. Bottom: over 400 runs, the probability that the most likely cell is the true one (blue) and the mean probability on the true cell (orange), both rising with the number of readings." />
+<figcaption aria-hidden="true">Top: belief over the 20 cells after the 1st, 3rd, 6th and 10th reading in one run (the run whose probability on the true cell after 10 readings is closest to the median of 400 runs): grey cells are doors, the red line the true cell. Bottom: over 400 runs, the probability that the most likely cell is the true one (blue) and the mean probability on the true cell (orange), both rising with the number of readings.</figcaption>
+</figure>
+<p><em>The information balance.</em> With the first version of this experiment (sensor right 80%, moves exact 80% of the time) the entropy <em>did not fall at all</em>: after 14 readings the probability that the peak was the true cell was only 22.5%. A move of error rates 80/10/10 adds 0.92 bits of entropy; a single reading of that sensor gains at most about 0.3 bits. <strong>A filter localises only if the sensing wins back more information than the motion loses;</strong> that is a property of the sensors, not of the code, and a reason to use better wheels as well as better sensors.</p>
+<h3 id="tier-3-medium-hard-the-kalman-filter-in-one-dimension">3.3 Tier 3 (medium-hard): the Kalman filter in one dimension</h3>
+<p>The histogram filter needs a table with one entry per place. If the belief is a single bump, a Gaussian, two numbers suffice: its mean <span class="math inline">x</span> and variance <span class="math inline">P</span>. The <strong>Kalman filter</strong> is the sense-and-move loop for Gaussians.</p>
+<p><strong>Fusing two estimates.</strong> Two independent Gaussian estimates <span class="math inline">\mathcal N(m_1,v_1)</span> and <span class="math inline">\mathcal N(m_2,v_2)</span> of the same quantity combine by multiplying their densities; the product of two Gaussians is a Gaussian with <span class="math display"> v=\frac{1}{1/v_1+1/v_2},\qquad m=v\Big(\frac{m_1}{v_1}+\frac{m_2}{v_2}\Big)=m_1+\frac{v_1}{v_1+v_2}\,(m_2-m_1). \tag{4}</span> The fused variance is smaller than both (the precisions <span class="math inline">1/v</span> add) and the mean is pulled toward the more certain estimate. Writing <span class="math inline">m=m_1+K(m_2-m_1)</span> with <span class="math inline">K=v_1/(v_1+v_2)</span> is already the Kalman update: <em>prediction</em> <span class="math inline">m_1</span> with variance <span class="math inline">v_1</span>, <em>measurement</em> <span class="math inline">m_2</span> with variance <span class="math inline">v_2</span>, <strong>gain</strong> <span class="math inline">K</span>, and the <strong>innovation</strong> <span class="math inline">\nu=m_2-m_1</span> (the surprise).</p>
+<p><strong>The scalar filter.</strong> A level <span class="math inline">x</span> (soil moisture) drifts as a random walk, <span class="math inline">x_{k+1}=x_k+w_k</span> with variance <span class="math inline">q</span> per step, and is measured as <span class="math inline">z_k=x_k+v_k</span> with variance <span class="math inline">r</span>. Each step: <span class="math display"> \text{predict: } x^-=x,\ P^-=P+q;\qquad\text{update: } K=\frac{P^-}{P^-+r},\ x=x^-+K(z-x^-),\ P=(1-K)P^-. \tag{5}</span> The prediction step <em>adds</em> the drift variance (uncertainty grows), the update step fuses by (4) (it shrinks).</p>
+<p><strong>The steady state, in closed form.</strong> Repeated steps converge; at the fixed point <span class="math inline">P^-=q+\dfrac{P^-r}{P^-+r}</span>, i.e. <span class="math inline">(P^-)^2-qP^--qr=0</span>: <span class="math display"> P^-_\infty=\frac{q+\sqrt{q^2+4qr}}{2},\qquad K_\infty=\frac{P^-_\infty}{P^-_\infty+r}. \tag{6}</span> With <span class="math inline">q=10^{-4}</span> and <span class="math inline">r=0.01</span> (a sensor noise standard deviation of 0.1): <span class="math inline">P^-_\infty=1.051\times10^{-3}</span>, <span class="math inline">K_\infty=0.0951</span> and the posterior variance <span class="math inline">9.51\times10^{-4}</span>, a standard deviation of <strong>0.0308 against the raw 0.100</strong> (<code>fig03_log.txt</code>). Prediction 2 of Section 2: the error falls to about 30%. The gain starts near 1 (0.990 at the first sample: the first reading is all we know), falls to 0.5, 0.211, 0.126 and has settled at 0.0951 by sample 50 (Figure 3, right).</p>
+<figure>
+<img src="../assets/fig/u10/fig03_kalman1d.png" style="width:95.0%" alt="Left: a drifting soil-moisture level (black), the raw readings (grey dots), the Kalman estimate (blue) and fixed-gain EMA filters with \alpha=0.5 (orange, too noisy) and \alpha=0.02 (green, too slow). Right: the Kalman gain (blue) falls from about 1 to the steady-state 0.095 (red dotted), while the standard deviation of the estimate (purple) settles at 0.031." />
+<figcaption aria-hidden="true">Left: a drifting soil-moisture level (black), the raw readings (grey dots), the Kalman estimate (blue) and fixed-gain EMA filters with <span class="math inline">\alpha=0.5</span> (orange, too noisy) and <span class="math inline">\alpha=0.02</span> (green, too slow). Right: the Kalman gain (blue) falls from about 1 to the steady-state 0.095 (red dotted), while the standard deviation of the estimate (purple) settles at 0.031.</figcaption>
+</figure>
+<p><strong>The EMA is a fixed-gain Kalman filter.</strong> The EMA of Unit 3, <span class="math inline">y\leftarrow y+\alpha(z-y)</span>, has exactly the form of the update with a constant <span class="math inline">K=\alpha</span>. Averaged over 200 runs (the RMSE after the first 100 samples): the raw readings 0.0997, the Kalman filter 0.0302, <strong>an EMA with <span class="math inline">\alpha=K_\infty=0.0951</span> also 0.0302</strong>, an EMA with <span class="math inline">\alpha=0.5</span> 0.0576 and with <span class="math inline">\alpha=0.02</span> 0.0481. The Kalman filter does not beat the <em>best</em> fixed gain in the long run; it beats every <em>other</em> choice, finds the best gain from <span class="math inline">q</span> and <span class="math inline">r</span> instead of by trial, and uses the high gain at the start when the estimate is poor (so it has no start-up lag). As a check of the claimed uncertainty: the true error was inside <span class="math inline">2\sqrt P</span> for 95.7% of the samples (a consistent filter should give 95.4%).</p>
+<h3 id="tier-4-hard-velocity-the-rover-filter-ranging-and-mapping">3.4 Tier 4 (hard): velocity, the rover filter, ranging and mapping</h3>
+<h4 id="more-states-position-and-velocity">3.4.1 More states: position and velocity</h4>
+<p>A rover approaching a wall is measured only in position (the ultrasonic range, <span class="math inline">\sigma=1</span> cm, every 0.1 s). Its speed can still be estimated by a <strong>constant-velocity filter</strong>: the state is (position, velocity), the model <span class="math inline">x_{k+1}=Fx_k</span> with <span class="math inline">F=\begin{pmatrix}1&amp;\Delta t\\0&amp;1\end{pmatrix}</span> plus an acceleration noise, the measurement <span class="math inline">H=(1\ 0)</span>, and the filter equations are the scalar ones in matrix form: <span class="math display"> x^-=Fx,\ \ P^-=FPF^\top+Q;\qquad K=P^-H^\top(HP^-H^\top+r)^{-1},\ \ x=x^-+K(z-Hx^-),\ \ P=(I-KH)P^-. \tag{7}</span> The covariance <span class="math inline">P</span> is now a matrix: its diagonal holds the variances of position and speed and its off-diagonal the correlation between them. Figure 4 (right): differencing successive readings gives a speed with standard deviation <span class="math inline">\sqrt2\,\sigma/\Delta t=0.141</span> m/s (simulated 0.145 m/s) for a true speed of 0.5 m/s; over 300 runs the filter’s speed error after 5 s is 0.019 m/s rms and its position error 0.64 cm against the raw 1 cm. The filter’s <em>reported</em> steady-state speed uncertainty (the Riccati solution) is 0.036 m/s, larger than the actual error: the filter assumes an acceleration noise of 0.05 m/s<span class="math inline">^2</span> that this constant-speed rover does not have, so it is conservative (consistent in the safe direction). The module’s test checks the filter’s variance against SciPy’s discrete Riccati solution to nine digits.</p>
+<h4 id="ultrasonic-ranging-and-the-speed-of-sound">3.4.2 Ultrasonic ranging and the speed of sound</h4>
+<p>The ultrasonic sensor of Unit 3 times a pulse’s round trip; the range is <span class="math inline">R=c\,t/2</span> with the speed of sound in dry air <span class="math display"> c(T)=331.3\sqrt{1+T/273.15}\ \text{m/s}\quad(T\text{ in }^\circ\text{C}) \tag{8}</span> (the standard ideal-gas result, with the constant 331.3 m/s at 0 degrees; not re-derived here): 331.30 m/s at 0 degrees, 343.21 at 20 and 354.73 at 40, a change of <strong>0.170% per degree</strong>. A node that assumes 20 degrees but sits in air at 35 reports a range 2.4% too short: for a wall 2.0 m away the error is <span class="math inline">-4.9</span> cm at 35 degrees and <span class="math inline">+7.2</span> cm at 0; at 4 m it is <span class="math inline">-9.9</span> and <span class="math inline">+14.4</span> cm (Figure 4, left). A greenhouse that swings by 20 degrees in a day therefore needs the temperature sensor of Unit 3 to correct the range: <span class="math inline">R=\tfrac12c(T_{\text{measured}})\,t</span>.</p>
+<figure>
+<img src="../assets/fig/u10/fig04_range_cv.png" style="width:95.0%" alt="Left: range error of an ultrasonic sensor that assumes 20 degrees C, against the true air temperature, for walls at 0.5, 2 and 4 m. Right: speed of a rover approaching a wall at 0.5 m/s, from position readings with \sigma=1 cm every 0.1 s: successive differences (grey, noise 0.14 m/s) and the constant-velocity Kalman filter (blue)." />
+<figcaption aria-hidden="true">Left: range error of an ultrasonic sensor that assumes 20 degrees C, against the true air temperature, for walls at 0.5, 2 and 4 m. Right: speed of a rover approaching a wall at 0.5 m/s, from position readings with <span class="math inline">\sigma=1</span> cm every 0.1 s: successive differences (grey, noise 0.14 m/s) and the constant-velocity Kalman filter (blue).</figcaption>
+</figure>
+<h4 id="fusing-encoders-a-gyroscope-and-wall-ranges-the-ekf">3.4.3 Fusing encoders, a gyroscope and wall ranges: the EKF</h4>
+<p>Unit 8 left R5 open: dead reckoning drifts. A <strong>gyroscope</strong> measures the turn rate <span class="math inline">\omega_g=\omega+b+n</span>: the truth, a slowly wandering <strong>bias</strong> <span class="math inline">b</span> (assumed 0.0035 rad/s, 0.2 degrees per second) and white noise (assumed 0.01 rad/s per 10 ms sample). Integrating it gives a heading that does not depend on the wheel radii, but whose error grows linearly with time. A second sensor gives an <em>absolute</em> reference: a left-facing ultrasonic sensor measures the distance to a straight wall at a known <span class="math inline">y=W=1.5</span> m. The beam leaves the rover at heading <span class="math inline">\theta+90^\circ</span> and meets the wall at range <span class="math display"> h(x,y,\theta)=\frac{W-y}{\cos\theta}. \tag{9}</span> The filter keeps four states <span class="math inline">s=(x,y,\theta,b)</span>.</p>
+<p><em>Predict</em> (every 10 ms) from the encoder travel <span class="math inline">\Delta s</span> and the gyro <span class="math inline">\omega_g</span>: <span class="math inline">\theta^+=\theta+(\omega_g-b)\Delta t</span>, <span class="math inline">x^+=x+\Delta s\cos\theta_m</span>, <span class="math inline">y^+=y+\Delta s\sin\theta_m</span> with <span class="math inline">\theta_m</span> the mean heading over the step; the covariance is propagated as <span class="math inline">P\leftarrow FPF^\top+GQ_nG^\top</span> with the Jacobian <span class="math inline">F</span> of this motion (non-zero entries <span class="math inline">-\Delta s\sin\theta_m</span> and <span class="math inline">\Delta s\cos\theta_m</span> against <span class="math inline">\theta</span>, and <span class="math inline">-\Delta t</span> for <span class="math inline">\theta</span> against <span class="math inline">b</span>). The noise terms are the slip (variance <span class="math inline">q\,|\Delta s|</span>, with <span class="math inline">q=4\times10^{-6}</span> m<span class="math inline">^2</span>/m as in Unit 8), the gyro noise and a bias random walk of <span class="math inline">10^{-4}</span> rad/s per <span class="math inline">\sqrt{\text{s}}</span> (assumed).</p>
+<p><em>Update</em> (every 0.2 s, when the beam hits the wall at less than 60 degrees): because (9) is nonlinear, linearise at the current estimate, <span class="math inline">H=\big(0,\ -1/\cos\theta,\ (W-y)\sin\theta/\cos^2\theta,\ 0\big)</span> (the module’s test checks this against finite differences), and apply the update of (7) with <span class="math inline">r=(1\ \text{cm})^2</span>. This is the <strong>extended Kalman filter</strong>: the Kalman filter with Jacobians in place of the matrices <span class="math inline">F</span> and <span class="math inline">H</span>.</p>
+<p><em>The experiment</em> (<code>fig05_ekf_patrol.py</code>). The true rover has a right wheel 0.5% large, slips, and carries the gyro bias; it must drive 20 m along the wall steering by the Unit 9 law <span class="math inline">\omega=-k_1(\hat y-y_{\text{ref}})-k_2\hat\theta</span> (<span class="math inline">k_1=1</span>, <span class="math inline">k_2=2</span>) on its own <em>estimate</em> of the pose, starting 0.5 m from the track and with a 1.0 m gap to the wall. Three estimators steer it:</p>
+<table>
+<caption>the 20 m patrol with three estimators (the same rover, the same seed). With encoders only the rover believes it is on its line throughout (dotted in Figure 5) while a 0.5% wheel error carries it to the wall in 5.5 m; prediction 3 of Section 2: touch the wall after about 5.5 m. For comparison, Unit 8’s open-loop run gave 6.19 m of odometry error at 20 m.</caption>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">steering on</th>
+<th style="text-align: right;">reaches</th>
+<th style="text-align: right;">final true <span class="math inline">y</span></th>
+<th style="text-align: right;">estimate error</th>
+<th style="text-align: left;">what happened</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">encoders only</td>
+<td style="text-align: right;">5.5 m</td>
+<td style="text-align: right;">1.40 m</td>
+<td style="text-align: right;">0.905 m</td>
+<td style="text-align: left;"><strong>hit the wall</strong> (all 60 runs)</td>
+</tr>
+<tr>
+<td style="text-align: left;">encoders and gyro</td>
+<td style="text-align: right;">20 m</td>
+<td style="text-align: right;"><span class="math inline">-0.95</span> m</td>
+<td style="text-align: right;">1.474 m (median of 60 runs 1.39 m)</td>
+<td style="text-align: left;">arrived, but 1.45 m off its row</td>
+</tr>
+<tr>
+<td style="text-align: left;">EKF (encoders, gyro, wall)</td>
+<td style="text-align: right;">20 m</td>
+<td style="text-align: right;">0.52 m</td>
+<td style="text-align: right;">0.053 m (median 0.050 m)</td>
+<td style="text-align: left;">on track, nearest wall gap 87.5 cm</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="../assets/fig/u10/fig05_ekf_patrol.png" style="width:95.0%" alt="Left: true paths (solid) and believed paths (dotted) of a 20 m patrol beside a wall at y = 1.5 m, with the rover steering on its encoder odometry (red: hits the wall after 5.5 m), on encoders plus gyro (orange: arrives, but 1.45 m from its row) and on the EKF (blue: stays within 2 cm of its line). Right: the error of each estimate against distance (log axis), the EKF’s 2-sigma bound (dashed) and the R5 limit of 2 m." />
+<figcaption aria-hidden="true">Left: true paths (solid) and believed paths (dotted) of a 20 m patrol beside a wall at y = 1.5 m, with the rover steering on its encoder odometry (red: hits the wall after 5.5 m), on encoders plus gyro (orange: arrives, but 1.45 m from its row) and on the EKF (blue: stays within 2 cm of its line). Right: the error of each estimate against distance (log axis), the EKF’s 2-sigma bound (dashed) and the R5 limit of 2 m.</figcaption>
+</figure>
+<p><strong>What the filter fixes, and what it cannot.</strong> The final EKF error is <span class="math inline">(dx,dy)=(-5.3,\ 0.6)</span> cm and <span class="math inline">d\theta=0.22^\circ</span>: the <em>sideways</em> error and the heading are fixed by the wall, and the gyro bias is learned (the estimate at 20 m is 0.00354 rad/s against the true 0.0035, standard deviation 0.00018 over 20 runs; the filter’s 1-<span class="math inline">\sigma</span> sideways error is 0.34 cm and the 60-run standard deviation 0.30 cm: consistent). The <em>along-the-wall</em> error is not: a wall range says nothing about <span class="math inline">x</span>, and the dominant <span class="math inline">x</span> error is 5 cm, the 0.25% average wheel-radius error times 20 m. The filter reports <span class="math inline">\sigma_x=1.34</span> cm: <strong>overconfident in <span class="math inline">x</span></strong>, because the systematic radius error is not in its model (it has only random slip). That is a failure of <em>consistency</em>, the match between reported and actual uncertainty, and it is the check to run on any filter. Fixing it needs either a scale-factor state or an <em>along-track</em> landmark. Surprisingly, wall ranges need not be frequent: a range every 0.2, 1, 5 and 20 s all gave final errors between 4.8 and 6.0 cm (20 runs each), because the gyro bias is learned from a few well-spaced ranges.</p>
+<h4 id="the-occupancy-grid">3.4.4 The occupancy grid</h4>
+<p>A map for planning (Unit 11) is a grid of cells, each with the probability <span class="math inline">p</span> that it is occupied. To make evidence add, store the <strong>log-odds</strong> <span class="math inline">\ell=\ln\frac p{1-p}</span>; a beam updates the cells it crosses and the cell where it ends: <span class="math display"> \ell\leftarrow\ell+\ell_{\text{meas}},\qquad \ell_{\text{free}}=-0.4\ (p=0.40),\quad \ell_{\text{occ}}=+0.85\ (p=0.70),\qquad p=\frac1{1+e^{-\ell}}. \tag{10}</span> (The constants are common round choices, assumed here.) Starting at <span class="math inline">p=0.5</span> (<span class="math inline">\ell=0</span>): one hit gives 0.70, two hits 0.846; two passes of a beam through a cell give <span class="math inline">p=0.31</span>. The module classifies <span class="math inline">p&gt;0.65</span> as occupied, <span class="math inline">p&lt;0.35</span> as free and the rest as unknown.</p>
+<p><em>The experiment</em> (<code>fig06_grid.py</code>). A 6 m by 4 m bay has a plant bed and a pot stand (899 occupied cells of 5 cm). The rover circuits the bay (13.45 m, 340 scans; a perfect external guide keeps its true path on the planned rectangle). At each scan a ring of 24 ultrasonic beams (range 3 m, noise 2 cm) is added to the grid at the pose the rover <em>believes</em>:</p>
+<table>
+<caption>occupancy-grid quality by the pose estimate (the ceiling of 71% is set by what the beams can see: the far sides of the bed and corners are hidden). The odometry run ends 0.92 m and 21.8 degrees from the truth and its map is smeared: walls duplicated and rotated. <strong>A mapping algorithm cannot repair a bad pose; it records it.</strong></caption>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">pose used for the map</th>
+<th style="text-align: right;">true cells recovered (within 1 cell)</th>
+<th style="text-align: right;">spurious occupied cells</th>
+<th style="text-align: right;">accuracy on known cells</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">true pose</td>
+<td style="text-align: right;">71.1%</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">99.4%</td>
+</tr>
+<tr>
+<td style="text-align: left;">EKF-quality pose (assumed 2 cm, 0.5 degree error)</td>
+<td style="text-align: right;">74.7%</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">98.7%</td>
+</tr>
+<tr>
+<td style="text-align: left;">encoder odometry (0.5% wheel error)</td>
+<td style="text-align: right;">23.9%</td>
+<td style="text-align: right;">236</td>
+<td style="text-align: right;">92.2%</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="../assets/fig/u10/fig06_grid.png" style="width:100.0%" alt="The occupancy grid of the bay built with the true pose (left), a pose with EKF-quality errors (middle) and encoder odometry only (right). Black: occupied, white: free, grey: unknown or hidden; the red line is the pose used. With odometry the walls are rotated and duplicated." />
+<figcaption aria-hidden="true">The occupancy grid of the bay built with the true pose (left), a pose with EKF-quality errors (middle) and encoder odometry only (right). Black: occupied, white: free, grey: unknown or hidden; the red line is the pose used. With odometry the walls are rotated and duplicated.</figcaption>
+</figure>
+<h3 id="tier-5-hardest-open-questions">3.5 Tier 5 (hardest): open questions</h3>
+<ol type="1">
+<li><strong>Simultaneous localisation and mapping (SLAM).</strong> The EKF above used a map (a straight wall at a known place) to localise, and the grid used a pose to map. What changes when neither is known? Why does the state grow with every landmark, and why does closing a loop (re-visiting a place) reduce the uncertainty of the whole path?</li>
+<li><strong>Observability.</strong> Show that wall ranges alone cannot determine <span class="math inline">x</span>. Then decide whether the gyro bias <span class="math inline">b</span> can be determined while the rover drives exactly parallel to the wall: <span class="math inline">H</span> has no entry for <span class="math inline">b</span>, so <span class="math inline">b</span> is seen only through the heading it corrupts, and the heading only through <span class="math inline">y</span>. What manoeuvre or what extra sensor makes the filter’s estimate of <span class="math inline">b</span> better?</li>
+<li><strong>Non-Gaussian beliefs.</strong> The histogram filter handled multi-modal beliefs (the several peaks of Figure 2); the Kalman filter cannot. Design the smallest change that lets a Kalman-type filter represent two possible locations, and say what it costs.</li>
+</ol>
+<h2 id="apply">4. Apply</h2>
+<h3 id="worked-problems">4.1 Worked problems</h3>
+<p><strong>Problem 1 (fusion).</strong> An ultrasonic sensor reads 2.00 m (<span class="math inline">\sigma=1</span> cm) and an infrared sensor reads 2.04 m (<span class="math inline">\sigma=3</span> cm). Fuse them.</p>
+<p><em>Solution.</em> <span class="math inline">v=1/(10^4+1111)=9.0\times10^{-5}</span> m<span class="math inline">^2</span>, <span class="math inline">\sigma=0.95</span> cm; <span class="math inline">m=9.0\times10^{-5}(2.00/10^{-4}+2.04/9\times10^{-4})=2.004</span> m. The estimate is pulled only 4 mm toward the poorer sensor and is better than both.</p>
+<p><strong>Problem 2 (Bayes).</strong> Dry soil has a prior of 5%; the sensor flags “dry” in 90% of dry cases and 8% of wet ones. What is the probability of dry after two independent “dry” readings?</p>
+<p><em>Solution.</em> After one: 0.3719. After two: <span class="math inline">\dfrac{0.9\times0.3719}{0.9\times0.3719+0.08\times0.6281}=\dfrac{0.3347}{0.3849}=0.870</span>.</p>
+<p><strong>Problem 3 (steady-state gain).</strong> <span class="math inline">q=10^{-4}</span>, <span class="math inline">r=0.04</span> (noise standard deviation 0.2). Find <span class="math inline">K_\infty</span> and the equivalent EMA coefficient.</p>
+<p><em>Solution.</em> <span class="math inline">P^-=(10^{-4}+\sqrt{10^{-8}+1.6\times10^{-5}})/2=2.05\times10^{-3}</span>; <span class="math inline">K_\infty=2.05\times10^{-3}/(2.05\times10^{-3}+0.04)=0.0488</span>: an EMA with <span class="math inline">\alpha\approx0.049</span> (time constant about 20 samples).</p>
+<p><strong>Problem 4 (grid).</strong> What is the probability of a cell after two hits, and after two hits and one pass-through?</p>
+<p><em>Solution.</em> <span class="math inline">\ell=1.70\Rightarrow p=0.846</span>; with one free update <span class="math inline">\ell=1.30\Rightarrow p=0.786</span>.</p>
+<p><strong>Problem 5 (speed of sound).</strong> The air is at 30 degrees and the node assumes 20. A wall is 3 m away. What does it report?</p>
+<p><em>Solution.</em> <span class="math inline">3\times343.21/349.02=2.950</span> m: 5.0 cm short. Compensating with the measured temperature removes it.</p>
+<h3 id="code-and-figures">4.2 Code and figures</h3>
+<pre class="python"><code>import localize_np as L
+
+k = L.Kalman1D(x0=0.5, p0=1.0, q=1e-4, r=1e-2)
+for z in readings:
+    k.predict(); k.update(z)
+print(L.steady_state_gain(1e-4, 1e-2))                    # (0.0951, 0.001051)
+print(L.fuse_gaussians(2.00, 1e-4, 2.04, 9e-4))           # (2.004, 9e-5)
+print(L.bayes_posterior(0.05, 0.90, 0.08))                # 0.3719
+r = L.patrol(&quot;ekf&quot;)                                       # dict: true, est, err, crashed, ...
+print(r[&quot;err&quot;], r[&quot;crashed&quot;])                             # 0.053, False
+g = L.OccupancyGrid(6.0, 4.0, 0.05); g.update_ray(x, y, th, rng, hit=True)</code></pre>
+<p>The module and README are in <code>codes/robotics/localize_np/</code>. Its nine tests check: the Gaussian coverage and the fusion formula; Bayes’ rule; the histogram filter (entropy, an exact move); the scalar filter against its closed form and steady state; the constant-velocity filter against SciPy’s Riccati solution; the speed of sound; the EKF’s measurement Jacobian against finite differences; the patrol (the EKF beats gyro-only, and the encoder-only rover hits the wall); and the occupancy grid on a box room.</p>
+<p><em>What would look different if the theory were wrong?</em> If (6) were wrong the iterated gain would not settle at 0.0951 (it does, to nine digits in the test). If the filter were not consistent the true error would leave the <span class="math inline">2\sqrt P</span> band more than 4.6% of the time (it did for 4.3%); in <span class="math inline">x</span> it <em>does</em> fail, which is how the model gap was found.</p>
+<h2 id="analyze">5. Analyze</h2>
+<p><strong>Limits.</strong> As <span class="math inline">r\to0</span> the gain <span class="math inline">K_\infty\to1</span> (believe the sensor); as <span class="math inline">r\to\infty</span> (or <span class="math inline">q\to0</span>) <span class="math inline">K_\infty\to0</span> (believe the model). For <span class="math inline">q\ll r</span>, <span class="math inline">K_\infty\approx\sqrt{q/r}</span>: here <span class="math inline">\sqrt{10^{-4}/0.01}=0.100</span> against the exact 0.0951. With no wall ranges the EKF becomes the gyro-aided odometer (error growing without bound).</p>
+<p><strong>Dominance.</strong> The along-track error dominates the EKF’s final position error (5.3 cm of the total 5.3 cm, the sideways part being 0.6 cm), as the sideways error is held by the wall. In the odometry map the heading error (21.8 degrees) rather than the position error (0.92 m) smears the walls: at 3 m a 21.8 degree error is a sideways displacement of 1.1 m.</p>
+<p><strong>Order-of-magnitude estimate.</strong> A heading bias of 0.2 degrees per second over a 40 s patrol is 8 degrees; the sideways drift <span class="math inline">\approx v\,b\,t^2/2=0.5\times0.0035\times1600/2=1.4</span> m, matching the 1.47 m of the gyro-only run.</p>
+<p><strong>Sensitivity.</strong> The range-update period barely matters (4.8 to 6.0 cm from 0.2 to 20 s); the speed of sound matters at 0.17% per degree; the map depends on the pose error almost entirely (23.9% against 71.1% of cells recovered).</p>
+<p><strong>Failure modes.</strong> (1) <em>A base-rate-blind alert</em> (Bayes). (2) <em>A filter that has stopped listening</em> (gain near zero with a wrong model). (3) <em>An inconsistent filter</em>: reported <span class="math inline">\sigma_x=1.3</span> cm against an actual error of 5 cm. (4) <em>Ranges with the wrong temperature.</em> (5) <em>A beam at a steep angle to the wall</em> (an echo bounces away: the filter ignores beams beyond 60 degrees). (6) <em>Mapping from a drifting pose.</em> (7) <em>A wrong map assumption</em> (the wall is not straight): the filter would then fit the rover to the wrong wall.</p>
+<p><strong>Items used from the pedagogy checklist:</strong> limits, dominance, estimate, sensitivity, failure modes, convergence (the gain settles), invariants (the fused variance is below both inputs; the EMA equals the Kalman filter at <span class="math inline">K_\infty</span>), residual and consistency (the <span class="math inline">2\sigma</span> coverage and the overconfident <span class="math inline">x</span>), uncertainty (Monte Carlo over 60 and 400 runs), and a priori versus a posteriori (the steady-state gain and the drift were computed before they were simulated).</p>
+<h2 id="evaluate">6. Evaluate</h2>
+<p><strong>Kalman, EMA or histogram?</strong> An EMA when the noise and drift are constant and a tuned <span class="math inline">\alpha</span> is good enough (it matched the Kalman filter here to four digits); a Kalman filter when the gain should adapt, when several sensors are fused, or when uncertainty must be reported; a histogram (or particle) filter when the belief has several peaks, as in the corridor, at the cost of memory and computation.</p>
+<p><strong>What a map buys.</strong> The wall-range update works because the <em>map</em> says where the wall is. In a new greenhouse the map must be built (SLAM, named), or the beacons surveyed; the cost of that survey is the price of bounded error. Without it the best available is the gyro-aided dead reckoning, 7% of distance here, which passed the 10% limit of R5 and still carried the rover 1.45 m off its row.</p>
+<p><strong>Alternatives.</strong> LiDAR gives hundreds of ranges per scan with centimetre noise and so localises against walls much more strongly; a camera gives landmarks and appearance; a magnetometer is unreliable near motors and steel; wheel encoders are cheap and drift. Each adds information with its own cost, power (Unit 2) and failure modes. Beacon systems (ultra-wideband radio, named only) give absolute position but need an installation.</p>
+<p><strong>Context.</strong> The filter bears the name of Rudolf Kalman (1960); it was used in the navigation of spacecraft in the 1960s (a common statement from memory, not verified here). <strong>When NOT to use these methods:</strong> the Kalman filter assumes noise that is Gaussian and uncorrelated; heavy-tailed errors (a bad echo from a leaf) need outlier rejection (gate the innovation, as the 60 degree limit does here, or use a robust filter); strongly nonlinear systems need an unscented or particle filter.</p>
+<p><strong>Honesty about this Unit’s numbers.</strong> The gyro bias and noise, the ultrasonic noise levels, the wall position, the 90% and 95% rates of the corridor, the room, and the “EKF-quality” pose errors for the map are assumed. The EKF’s wall measurement is a perfect knowledge of the wall; real walls and plants are not straight. The filter equations are derived here from the Gaussian product and checked against SciPy’s Riccati solver; Kalman’s 1960 paper and the standard textbook were not read.</p>
+<h2 id="create">7. Create</h2>
+<div class="create" title="What you can build from this">
+<ol type="1">
+<li><strong>Tune from data.</strong> Simulate a sensor with an unknown drift, estimate <span class="math inline">q</span> and <span class="math inline">r</span> from the innovations (their variance should be <span class="math inline">P^-+r</span>), and compare the filter with the best fixed EMA.</li>
+<li><strong>Fix the overconfidence.</strong> Add a scale-factor state (the unknown average wheel-radius error) to <code>PoseEKF</code> and check whether the final <span class="math inline">x</span> error falls below 1 cm and the filter becomes consistent.</li>
+<li><strong>A far landmark.</strong> Add a range-to-a-post measurement at the end of the wall and show the along-track error collapse.</li>
+<li><strong>Temperature-compensated ranging.</strong> Use the Unit 3 temperature sensor in <code>echo_range</code> and quantify the map improvement over a day of 10 to 35 degrees.</li>
+<li><strong>Could become a package module:</strong> <code>iotrobotics.localize</code> with the filters and the grid, reused by Units 11 and 12.</li>
+</ol>
+</div>
+<p><strong>Running project, Layer 9: where the rover is, and what is around it.</strong> The rover estimates its pose with the EKF (encoders, gyro, wall ranges) and writes an occupancy grid. Updated requirements:</p>
+<table>
+<caption>running-project requirements updated by Unit 10.</caption>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">id</th>
+<th style="text-align: left;">requirement</th>
+<th style="text-align: left;">status after Unit 10</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">R5</td>
+<td style="text-align: left;">position error after a 20 m patrol under 10% of distance, then corrected</td>
+<td style="text-align: left;"><strong>closed</strong> in simulation: encoders alone hit the wall at 5.5 m; gyro-aided odometry 1.39 m median (7%) but 1.45 m off its row; EKF with wall ranges 0.05 m (0.25%), sideways 0.6 cm</td>
+</tr>
+<tr>
+<td style="text-align: left;">R35 (new)</td>
+<td style="text-align: left;">sideways position error against a wall under 2 cm</td>
+<td style="text-align: left;">met: EKF sideways error std 0.30 cm over 60 runs, reported 0.34 cm</td>
+</tr>
+<tr>
+<td style="text-align: left;">R36 (new)</td>
+<td style="text-align: left;">filter consistency</td>
+<td style="text-align: left;"><strong>met for the sideways error, failed along the wall</strong>: reported 1.3 cm against 5.3 cm actual; needs a scale state or a landmark</td>
+</tr>
+<tr>
+<td style="text-align: left;">R37 (new)</td>
+<td style="text-align: left;">range compensated for the air temperature</td>
+<td style="text-align: left;">needed above 0.17% per degree: 4 m range error 14.4 cm at 0 degrees uncorrected</td>
+</tr>
+<tr>
+<td style="text-align: left;">R38 (new)</td>
+<td style="text-align: left;">the map is built with a pose error of at most a few centimetres</td>
+<td style="text-align: left;">encoder-only map: 23.9% of true cells recovered, 236 spurious cells; EKF-quality pose: 74.7%, none</td>
+</tr>
+<tr>
+<td style="text-align: left;">R3</td>
+<td style="text-align: left;">stopping distance</td>
+<td style="text-align: left;"><strong>still open until Unit 11</strong>: needs the obstacle to be seen early enough (an ultrasonic range of 1.5 m stops a 0.5 m/s rover with a 9.6 cm stop)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="visualization-lesson">8. Visualization lesson</h2>
+<table>
+<caption>the chart types of this Unit. Ladder: <em>remember</em> the names; <em>understand</em> what each shows; <em>apply</em> the call; <em>analyse</em> how it misleads; <em>evaluate</em> when a table is better (the three-estimator table of Section 3.4.3: three numbers per row); <em>create</em> a new one (a coverage plot of the actual error inside the reported <span class="math inline">2\sigma</span> band).</caption>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Chart type</th>
+<th style="text-align: left;">Best for</th>
+<th style="text-align: left;">How it misleads</th>
+<th style="text-align: left;">matplotlib call</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">histogram with the fitted density</td>
+<td style="text-align: left;">whether noise is Gaussian</td>
+<td style="text-align: left;">too few bins; a good fit by eye hides the tails, so print the 1, 2 and 3 sigma coverage</td>
+<td style="text-align: left;"><code>ax.hist(x, density=True)</code>, <code>ax.plot(xs, pdf)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">bar chart of a belief over cells</td>
+<td style="text-align: left;">what the robot thinks</td>
+<td style="text-align: left;">one run can look lucky; add an average over many runs</td>
+<td style="text-align: left;"><code>ax.bar(range(n), belief)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">estimate against truth with the raw data</td>
+<td style="text-align: left;">filter quality</td>
+<td style="text-align: left;">smoothing looks good when the truth is slow; show the lag</td>
+<td style="text-align: left;"><code>ax.plot(z, ".")</code>, <code>ax.plot(x_hat)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">gain and uncertainty over time (twin axes)</td>
+<td style="text-align: left;">how a filter learns</td>
+<td style="text-align: left;">two y axes invite false comparisons; label colours</td>
+<td style="text-align: left;"><code>ax.twinx()</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">true path against believed path (plan view)</td>
+<td style="text-align: left;">localisation error</td>
+<td style="text-align: left;">hides the time axis; add error against distance</td>
+<td style="text-align: left;"><code>ax.plot(x, y)</code>, <code>ax.set(aspect="equal")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">log-axis error against distance with an uncertainty bound</td>
+<td style="text-align: left;">consistency</td>
+<td style="text-align: left;">a log axis hides small differences between small errors</td>
+<td style="text-align: left;"><code>ax.set_yscale("log")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">occupancy image (grey scale: occupied, free, unknown)</td>
+<td style="text-align: left;">a map</td>
+<td style="text-align: left;">unknown looks like free when the colour map is poor; use a third grey</td>
+<td style="text-align: left;"><code>ax.imshow(grid, origin="lower")</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading Figure 5 (left) as a chart.</strong> The dotted line (belief) and the solid line (truth) of the encoder-only rover separate immediately: the picture is the failure. Plotted as an error against time alone, it would look like a modest drift and would not show that the rover hit the wall.</p>
+<h2 id="problem-set">9. Problem set</h2>
+<div class="exercise" title="Graded exercises">
+<ol type="1">
+<li>(easy) A sensor has a noise standard deviation of 2 cm. In what fraction of readings is the error beyond 4 cm? How many readings must be averaged to bring the standard deviation of the mean to 0.5 cm?</li>
+<li>(medium) Two independent estimates of the heading are <span class="math inline">10^\circ</span> (<span class="math inline">\sigma=2^\circ</span>) and <span class="math inline">14^\circ</span> (<span class="math inline">\sigma=1^\circ</span>). Fuse them and give the gain <span class="math inline">K</span> in the form <span class="math inline">m=m_1+K(m_2-m_1)</span>.</li>
+<li>(medium-hard) For the scalar filter with <span class="math inline">q=4\times10^{-4}</span> and <span class="math inline">r=0.01</span>, find <span class="math inline">K_\infty</span> from (6), the equivalent EMA time constant (samples) and the steady-state posterior standard deviation.</li>
+<li>(hard) Derive (6) from the fixed-point condition, and show that for <span class="math inline">q\ll r</span> the gain is approximately <span class="math inline">\sqrt{q/r}</span> and the posterior variance approximately <span class="math inline">\sqrt{qr}</span>.</li>
+<li>(hardest) A rover drives 20 m beside a wall. The gyro bias is <span class="math inline">b</span> (unknown, constant), the wheels are perfect, and the wall is measured without noise every 0.2 s. Show that the bias can be estimated from the growth of the innovation, find the estimate after a time <span class="math inline">t</span> in terms of the lateral drift <span class="math inline">y(t)</span>, and state how the estimate’s variance would depend on the range noise <span class="math inline">\sigma_r</span> and the elapsed time.</li>
+</ol>
+</div>
+<h2 id="retrieval-practice-and-recap">10. Retrieval practice and recap</h2>
+<p><strong>Answers to the Section 2 predictions.</strong></p>
+<ol type="1">
+<li>About 37% (0.372): the sensor’s false alarms on the 95% wet soil outnumber the true detections.</li>
+<li>To about 30% (0.031 against 0.100).</li>
+<li>It touches the wall, after about 5.5 m; the rover believes it is on course throughout.</li>
+</ol>
+<p><strong>Answers to the Section 2 recall quiz.</strong></p>
+<ol type="1">
+<li>68.3%, 95.4% and 99.7%.</li>
+<li>It shrinks: <span class="math inline">1/v=1/v_1+1/v_2</span>, smaller than both.</li>
+<li>For a perfect sensor <span class="math inline">K\to1</span> (take the measurement), for a useless one <span class="math inline">K\to0</span> (keep the prediction).</li>
+<li>A wall range is a distance perpendicular to the wall; it constrains sideways position and heading but gives no information about where along the wall the rover is.</li>
+<li>The range is <span class="math inline">ct/2</span> and the speed of sound <span class="math inline">c</span> changes by 0.17% per degree.</li>
+</ol>
+<p><strong>Explain it to a friend.</strong></p>
+<ul>
+<li>Why is one “dry” alert not proof of dry soil, but four in a row nearly are?</li>
+<li>Why does a smoothing filter lag when its gain is small, and why does a Kalman filter start with a big gain?</li>
+<li>Why can a robot with a wall at its side not tell how far along the wall it is?</li>
+</ul>
+<p><strong>Re-derive by hand tomorrow, without looking:</strong> (a) the fusion formulas (4) from the product of two Gaussians; (b) the steady-state Kalman gain <span class="math inline">K_\infty</span> for the random walk; (c) the wall range <span class="math inline">h=(W-y)/\cos\theta</span> and its derivatives.</p>
+<h2 id="where-next">11. Where next</h2>
+<ul>
+<li><strong>Unit 11</strong> gives the rover a goal: grid graphs, breadth-first search, Dijkstra and A*, obstacle inflation, pure-pursuit path following and the ROS 2 concepts that connect them. It uses the occupancy grid of this Unit as its world and closes the stopping-distance requirement R3.</li>
+<li>Terms named here but not taught: SLAM, the unscented and particle filters, observability. They are registered in CURRICULUM.md.</li>
+<li><strong>Open threads:</strong> Kalman’s 1960 paper and the standard textbook were not read; the gyro and ultrasonic noise levels and the wall are assumed; the filter is overconfident along the wall (no scale-factor state); the heading was not tested through a turn; nothing was run on a real sensor.</li>
+</ul>
+<p style="display:flex;justify-content:space-between;margin-top:40px"><a class="btn" href="u9.html">&larr; Control</a><a class="btn" href="u11.html">Planning, ROS &rarr;</a></p></article></div></main>
 <footer><div class="wrap">Internet of Things and Robotics crash course · Code is MIT-licensed; PDFs are for study use. Companion to the <a href="../../index.html">Generative AI and LLMs course</a>.</div></footer>
 <script>
 document.getElementById('theme').onclick=function(){var d=document.documentElement,c=d.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'),n=c==='dark'?'light':'dark';d.dataset.theme=n;try{localStorage.setItem('theme',n)}catch(e){}};

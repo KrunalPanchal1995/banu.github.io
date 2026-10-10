@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Playground · IoT and Robotics</title>
+<meta name="description" content="From volts and sensors to MQTT, security, kinematics, control, localisation and navigation, built around one running project: a Smart Greenhouse Rover. Twelve units with a PDF and runnable code each, a 14-lab track and an assessment bank. Built for a B.Tech student; simulation-first, no hardware needed.">
+<link rel="stylesheet" href="../../assets/css/style.css"><link rel="stylesheet" href="../assets/css/iot.css">
+<script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head><body>
+<header class="site-head"><div class="wrap">
+<a class="brand" href="../index.html">IoT <span>&amp;</span> Robotics<span class="long"> crash course</span></a>
+<nav class="nav" aria-label="Main"><a href="../index.html">Course</a><a href="../playground/index.html" aria-current=page>Playground</a><a href="../labs.html">Labs</a><a href="../assessment.html">Assessment</a><a href="../downloads.html">Downloads</a><a href="../../index.html">GenAI course</a><button class="theme-btn" id="theme" type="button" aria-label="Toggle dark mode">Theme</button></nav>
+</div></header>
+<main class="wrap"><h1>Playground</h1><p class="lede">Eleven small widgets. Each one is a JavaScript port of a function from the course code, and the course&rsquo;s browser test checks every port against the numbers the Python modules give. They run in your browser; nothing is sent anywhere.</p>
+<div id="widgets" class="grid"></div>
+<noscript><p class="box warn">The widgets need JavaScript.</p></noscript>
+<h2>What the ports are checked against</h2><p>Divider, ADC and alias: <code>circuits_np</code>, <code>sensors_np</code>. Debouncer: <code>node_fsm.Debouncer</code>. QoS: <code>netcalc</code>. Detectors and Kalman filter: <code>telemetry_np</code>, <code>localize_np</code>. Arm and odometry: <code>kinematics_np</code>. PID: <code>control_np</code> (the same sampled motor, one sample of delay, the 7 V limit). Grid: <code>localize_np.OccupancyGrid</code>. A*: <code>planning_np.astar</code>, including the number of cells expanded on the greenhouse map.</p></main>
+<footer><div class="wrap">Internet of Things and Robotics crash course · Code is MIT-licensed; PDFs are for study use. Companion to the <a href="../../index.html">Generative AI and LLMs course</a>.</div></footer>
+<script>
+document.getElementById('theme').onclick=function(){var d=document.documentElement,c=d.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'),n=c==='dark'?'light':'dark';d.dataset.theme=n;try{localStorage.setItem('theme',n)}catch(e){}};
+</script>
+<script src="../assets/js/iot_widgets.js"></script></body></html>

@@ -8,3 +8,7 @@
 .doc table{font-size:14px}
 .doc h2{scroll-margin-top:70px}
 .doc caption{caption-side:bottom;color:var(--muted);font-size:13.5px;padding-top:6px;text-align:left}
+.pgw{padding:14px 16px}.pgw .ctl{display:grid;grid-template-columns:minmax(120px,40%) 1fr 70px;gap:8px;align-items:center;margin:4px 0;font-size:14px}.pgw .ctl input{width:100%}
+.pgw .readout{margin:8px 0;font-size:14px;line-height:1.45}.pgw canvas{margin:6px 0;max-width:100%}.pgw select{max-width:100%;padding:4px}
+.pgw .btn{margin:6px 0}details.q{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--surface)}details.q summary{cursor:pointer}details.q div{margin-top:6px}
+.kit{color:var(--muted);font-size:14px}
